@@ -18,6 +18,10 @@ defmodule Finpilot.Accounts.User do
     field :calendar_read, :boolean, default: false
     field :calendar_write, :boolean, default: false
     field :hubspot, :boolean, default: false
+    field :hubspot_access_token, :string
+    field :hubspot_refresh_token, :string
+    field :hubspot_expiry, :utc_datetime
+    field :hubspot_portal_id, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -25,7 +29,7 @@ defmodule Finpilot.Accounts.User do
   @doc false
   def changeset(user, attrs) do
     user
-    |> cast(attrs, [:username, :email, :name, :picture, :verified, :google_access_token, :google_refresh_token, :google_expiry, :gmail_read, :gmail_write, :calendar_read, :calendar_write, :hubspot])
+    |> cast(attrs, [:username, :email, :name, :picture, :verified, :google_access_token, :google_refresh_token, :google_expiry, :gmail_read, :gmail_write, :calendar_read, :calendar_write, :hubspot, :hubspot_access_token, :hubspot_refresh_token, :hubspot_expiry, :hubspot_portal_id])
     |> validate_required([:email])
     |> validate_format(:email, ~r/^[^\s]+@[^\s]+$/, message: "must have the @ sign and no spaces")
     |> put_username_from_email()
@@ -76,5 +80,26 @@ defmodule Finpilot.Accounts.User do
     not is_nil(user.google_access_token) and
       not is_nil(user.google_refresh_token) and
       (is_nil(user.google_expiry) or DateTime.compare(user.google_expiry, DateTime.utc_now()) == :gt)
+  end
+
+  @doc """
+  Returns a map of HubSpot OAuth tokens for the user.
+  """
+  def hubspot_tokens(%__MODULE__{} = user) do
+    %{
+      access_token: user.hubspot_access_token,
+      refresh_token: user.hubspot_refresh_token,
+      expiry: user.hubspot_expiry,
+      portal_id: user.hubspot_portal_id
+    }
+  end
+
+  @doc """
+  Checks if the user has valid HubSpot OAuth tokens.
+  """
+  def has_valid_hubspot_tokens?(%__MODULE__{} = user) do
+    not is_nil(user.hubspot_access_token) and
+      not is_nil(user.hubspot_refresh_token) and
+      (is_nil(user.hubspot_expiry) or DateTime.compare(user.hubspot_expiry, DateTime.utc_now()) == :gt)
   end
 end

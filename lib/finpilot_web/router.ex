@@ -21,6 +21,7 @@ defmodule FinpilotWeb.Router do
 
     # OAuth routes
     get "/auth/google/callback", AuthController, :google_callback
+    get "/auth/hubspot/callback", AuthController, :hubspot_callback
     get "/auth/signout", AuthController, :signout
   end
 

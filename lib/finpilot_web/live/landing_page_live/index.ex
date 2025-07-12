@@ -1,6 +1,7 @@
 defmodule FinpilotWeb.LandingPageLive.Index do
   use FinpilotWeb, :live_view
   alias Finpilot.Accounts
+  alias FinpilotWeb.Structs.CurrentSessionUser
 
   @impl true
   def mount(_params, session, socket) do
@@ -15,19 +16,14 @@ defmodule FinpilotWeb.LandingPageLive.Index do
       nil -> nil  # User doesn't exist in database, clear session
       db_user ->
         # Create proper CurrentSessionUser struct with all required fields
-        %FinpilotWeb.Structs.CurrentSessionUser{
+        %CurrentSessionUser{
           id: db_user.id,
           username: db_user.username,
           email: db_user.email,
           name: db_user.name,
           picture: db_user.picture,
           verified: db_user.verified,
-          google: FinpilotWeb.Structs.CurrentSessionUser.new_google_tokens(
-            db_user.google_access_token,
-            db_user.google_refresh_token,
-            db_user.google_expiry
-          ),
-          connection_permissions: FinpilotWeb.Structs.CurrentSessionUser.new_connection_permissions(
+          connection_permissions: CurrentSessionUser.new_connection_permissions(
             db_user.gmail_read,
             db_user.gmail_write,
             db_user.calendar_read,
@@ -81,9 +77,13 @@ defmodule FinpilotWeb.LandingPageLive.Index do
             {:noreply, socket}
         end
       "hubspot" ->
-        # HubSpot authorization logic would go here
-        socket = socket |> put_flash(:info, "HubSpot integration coming soon!")
-        {:noreply, socket}
+        case Hubspot.authorize_url() do
+          {:ok, redirect_url} ->
+            {:noreply, redirect(socket, external: redirect_url)}
+          {:error, error} ->
+            socket = socket |> put_flash(:error, "Failed to authorize HubSpot: #{error}")
+            {:noreply, socket}
+        end
       _ ->
         {:noreply, socket}
     end

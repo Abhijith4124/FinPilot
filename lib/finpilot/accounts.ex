@@ -164,4 +164,24 @@ defmodule Finpilot.Accounts do
   def update_connection_permissions(%User{} = user, permissions) when is_map(permissions) do
     update_user(user, permissions)
   end
+
+  @doc """
+  Updates HubSpot OAuth tokens for a user.
+
+  ## Examples
+
+      iex> update_hubspot_tokens(user, "access_token", "refresh_token", ~U[2024-01-01 00:00:00Z], "12345")
+      {:ok, %User{}}
+
+  """
+  def update_hubspot_tokens(%User{} = user, access_token, refresh_token, expiry, portal_id) do
+    attrs = %{
+      hubspot_access_token: access_token,
+      hubspot_refresh_token: refresh_token,
+      hubspot_expiry: expiry,
+      hubspot_portal_id: portal_id,
+      hubspot: true
+    }
+    update_user(user, attrs)
+  end
 end

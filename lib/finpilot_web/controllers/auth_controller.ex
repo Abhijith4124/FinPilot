@@ -1,6 +1,7 @@
 defmodule FinpilotWeb.AuthController do
   use FinpilotWeb, :controller
   alias Finpilot.Accounts
+  alis FinpilotWeb.Structs.CurrentSessionUser
 
   # Function to validate access token and check granted scopes
   def validate_token_scopes(access_token) do
@@ -78,6 +79,96 @@ defmodule FinpilotWeb.AuthController do
     |> redirect(to: "/")
   end
 
+  def hubspot_callback(conn, %{"code" => code}) do
+    with {:ok, client} <- Hubspot.get_access_token(code: code),
+         %OAuth2.AccessToken{
+            access_token: access_token,
+            refresh_token: refresh_token,
+            expires_at: expires_at
+          } <- client.token do
+
+      # Get token info from HubSpot to extract portal ID
+      headers = [{"Authorization", "Bearer #{access_token}"}]
+
+      case Finch.build(:get, "https://api.hubapi.com/oauth/v1/access-tokens/#{access_token}", headers)
+           |> Finch.request(Finpilot.Finch) do
+        {:ok, %Finch.Response{status: 200, body: body}} ->
+          case Jason.decode(body) do
+            {:ok, token_info} ->
+              portal_id = token_info["hub_id"] || token_info["portal_id"] || token_info["hubId"]
+
+              # Get current user from session
+              current_user = get_session(conn, :current_user)
+
+              if current_user && current_user.email do
+                case Accounts.get_user_by_email(current_user.email) do
+                  nil ->
+                    conn
+                    |> put_flash(:error, "User not found. Please sign in again.")
+                    |> redirect(to: "/")
+
+                  user ->
+                    # Convert expires_at to DateTime if it's an integer timestamp
+                    expiry_datetime = case expires_at do
+                      timestamp when is_integer(timestamp) -> DateTime.from_unix!(timestamp)
+                      datetime -> datetime
+                    end
+
+                    # Update user with HubSpot tokens
+                    case Accounts.update_hubspot_tokens(user, access_token, refresh_token, expiry_datetime, to_string(portal_id)) do
+                      {:ok, _updated_user} ->
+                        # Update session with new HubSpot connection status
+                        updated_session_user = %{current_user |
+                          connection_permissions: %{current_user.connection_permissions | hubspot: true}
+                        }
+
+                        conn
+                        |> put_session(:current_user, updated_session_user)
+                        |> put_flash(:info, "Successfully connected to HubSpot!")
+                        |> redirect(to: "/")
+
+                      {:error, _changeset} ->
+                        conn
+                        |> put_flash(:error, "Failed to save HubSpot connection")
+                        |> redirect(to: "/")
+                    end
+                end
+              else
+                conn
+                |> put_flash(:error, "Please sign in first before connecting HubSpot")
+                |> redirect(to: "/")
+              end
+
+            {:error, _decode_error} ->
+              conn
+              |> put_flash(:error, "Failed to parse HubSpot account information")
+              |> redirect(to: "/")
+          end
+
+        {:ok, %Finch.Response{status: status, body: _body}} ->
+          conn
+          |> put_flash(:error, "Failed to get HubSpot account information (HTTP #{status})")
+          |> redirect(to: "/")
+
+        {:error, _error} ->
+          conn
+          |> put_flash(:error, "Network error getting HubSpot account information")
+          |> redirect(to: "/")
+      end
+    else
+      {:error, reason} ->
+        conn
+        |> put_flash(:error, "HubSpot authentication failed: #{reason}")
+        |> redirect(to: "/")
+    end
+  end
+
+  def hubspot_callback(conn, _params) do
+    conn
+    |> put_flash(:error, "HubSpot authentication failed: No authorization code received")
+    |> redirect(to: "/")
+  end
+
   def signout(conn, _params) do
     conn
     |> clear_session()
@@ -120,21 +211,15 @@ defmodule FinpilotWeb.AuthController do
     end
 
     # Create session user struct
-    current_session_user = %FinpilotWeb.Structs.CurrentSessionUser{
+    current_session_user = %CurrentSessionUser{
       id: user.id,
       username: user.username,
       email: user.email,
       name: user.name,
       picture: user.picture,
       verified: user.verified,
-      google:
-        FinpilotWeb.Structs.CurrentSessionUser.new_google_tokens(
-          user.google_access_token,
-          user.google_refresh_token,
-          user.google_expiry
-        ),
       connection_permissions:
-        FinpilotWeb.Structs.CurrentSessionUser.new_connection_permissions(
+        CurrentSessionUser.new_connection_permissions(
           user.gmail_read,
           user.gmail_write,
           user.calendar_read,

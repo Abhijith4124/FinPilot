@@ -17,6 +17,10 @@ defmodule Finpilot.Repo.Migrations.CreateUsers do
       add :calendar_read, :boolean, default: false, null: false
       add :calendar_write, :boolean, default: false, null: false
       add :hubspot, :boolean, default: false, null: false
+      add :hubspot_access_token, :string
+      add :hubspot_refresh_token, :string
+      add :hubspot_expiry, :utc_datetime
+      add :hubspot_portal_id, :string
 
       timestamps(type: :utc_datetime)
     end

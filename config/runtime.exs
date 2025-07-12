@@ -34,6 +34,11 @@ config :finpilot, Google,
     client_secret: env!("GOOGLE_CLIENT_SECRET"),
     redirect_uri: env!("GOOGLE_REDIRECT_URI")
 
+config :finpilot, HubSpot,
+    client_id: env!("HUBSPOT_CLIENT_ID"),
+    client_secret: env!("HUBSPOT_CLIENT_SECRET"),
+    redirect_uri: env!("HUBSPOT_REDIRECT_URI")
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
