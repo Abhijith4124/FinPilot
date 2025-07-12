@@ -19,6 +19,10 @@ defmodule FinpilotWeb.Router do
     pipe_through :browser
 
     live "/", LandingPageLive.Index, :index
+    
+    # OAuth routes
+    get "/auth/google/callback", AuthController, :google_callback
+    get "/auth/signout", AuthController, :signout
   end
 
   # Other scopes may use custom stacks.

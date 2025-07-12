@@ -21,9 +21,18 @@ if System.get_env("PHX_SERVER") do
   config :finpilot, FinpilotWeb.Endpoint, server: true
 end
 
-source! ([
-  Path.absname(".env")
+env_dir_prefix = System.get_env("RELEASE_ROOT") || Path.expand("./envs")
+
+source!([
+  Path.absname(".env", env_dir_prefix),
+  Path.absname("#{config_env()}.env", env_dir_prefix),
+  System.get_env()
 ])
+
+config :finpilot, Google,
+    client_id: env!("GOOGLE_CLIENT_ID"),
+    client_secret: env!("GOOGLE_CLIENT_SECRET"),
+    redirect_uri: env!("GOOGLE_REDIRECT_URI")
 
 if config_env() == :prod do
   database_url =
@@ -69,11 +78,6 @@ if config_env() == :prod do
       port: port
     ],
     secret_key_base: secret_key_base
-
-  config :finpilot, Google,
-    client_id: System.get_env("GOOGLE_CLIENT_ID"),
-    client_secret: System.get_env("GOOGLE_CLIENT_SECRET"),
-    redirect_uri: System.get_env("GOOGLE_REDIRECT_URI")
 
   # ## SSL Support
   #

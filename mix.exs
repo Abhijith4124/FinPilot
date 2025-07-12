@@ -59,7 +59,9 @@ defmodule Finpilot.MixProject do
       {:dns_cluster, "~> 0.1.1"},
       {:bandit, "~> 1.5"},
       {:oauth2, "~> 2.0"},
-      {:dotenvy, "~> 1.0.0"}
+      {:dotenvy, "~> 0.8.0"},
+      {:google_api_gmail, "~> 0.17"},
+      {:google_api_calendar, "~> 0.26"}
     ]
   end
 

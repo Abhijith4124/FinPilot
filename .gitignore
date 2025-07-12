@@ -35,4 +35,6 @@ finpilot-*.tar
 npm-debug.log
 /assets/node_modules/
 
-lib/.env
+# Environment files
+envs/*
+envs/*

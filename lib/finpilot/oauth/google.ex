@@ -19,13 +19,27 @@ defmodule Google do
     |> OAuth2.Client.put_serializer("application/json", Jason)
   end
 
-  def authorize_url! do
-    OAuth2.Client.authorize_url!(client(), scope: @google_scopes)
+  def authorize_url do
+    try do
+      redirect_url = OAuth2.Client.authorize_url!(client(),
+        scope: @google_scopes,
+        access_type: "offline",
+        prompt: "consent"
+      )
+      {:ok, redirect_url}
+    rescue
+      _ ->
+        {:error, "Unable to connect to Google. Please try again later."}
+    end
   end
 
-  # you can pass options to the underlying http library via `opts` parameter
-  def get_token!(params \\ [], headers \\ [], opts \\ []) do
-    OAuth2.Client.get_token!(client(), params, headers, opts)
+  def get_access_token(params \\ [], headers \\ [], opts \\ []) do
+    try do
+      {:ok, OAuth2.Client.get_token!(client(), params, headers, opts)}
+    rescue
+      _ ->
+        {:error, "Unable to get access token from Google. Please try again later."}
+    end
   end
 
   # Strategy Callbacks
