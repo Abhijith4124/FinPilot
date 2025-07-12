@@ -1,7 +1,7 @@
 defmodule FinpilotWeb.AuthController do
   use FinpilotWeb, :controller
   alias Finpilot.Accounts
-  alis FinpilotWeb.Structs.CurrentSessionUser
+  alias FinpilotWeb.Structs.CurrentSessionUser
 
   # Function to validate access token and check granted scopes
   def validate_token_scopes(access_token) do
