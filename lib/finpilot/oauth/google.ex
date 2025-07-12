@@ -33,6 +33,21 @@ defmodule Google do
     end
   end
 
+  def authorize_url(custom_scopes) when is_list(custom_scopes) do
+    try do
+      scope_string = Enum.join(custom_scopes, " ")
+      redirect_url = OAuth2.Client.authorize_url!(client(),
+        scope: scope_string,
+        access_type: "offline",
+        prompt: "consent"
+      )
+      {:ok, redirect_url}
+    rescue
+      _ ->
+        {:error, "Unable to connect to Google. Please try again later."}
+    end
+  end
+
   def get_access_token(params \\ [], headers \\ [], opts \\ []) do
     try do
       {:ok, OAuth2.Client.get_token!(client(), params, headers, opts)}

@@ -28,6 +28,131 @@
     </div>
   <% end %>
 
+  <!-- Settings Modal -->
+  <%= if @show_settings do %>
+    <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-xl">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-xl font-bold text-gray-900">Settings</h2>
+          <button phx-click="toggle_settings" class="text-gray-400 hover:text-gray-600">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        
+        <div class="space-y-6">
+          <div>
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Connections</h3>
+            <div class="space-y-4">
+              
+              <!-- Gmail Connection -->
+              <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                <div class="flex items-center space-x-3">
+                  <div class="w-10 h-10 bg-red-500 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-.904.732-1.636 1.636-1.636h3.819l6.545 4.91 6.545-4.91h3.819A1.636 1.636 0 0 1 24 5.457z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 class="font-medium text-gray-900">Gmail</h4>
+                    <p class="text-sm text-gray-500">
+                      <%= if @current_user && @current_user.connection_permissions && (@current_user.connection_permissions.gmail_read || @current_user.connection_permissions.gmail_write) do %>
+                        Connected - 
+                        <%= if @current_user.connection_permissions.gmail_read do %>Read<% end %>
+                        <%= if @current_user.connection_permissions.gmail_write do %>, Write<% end %>
+                      <% else %>
+                        Not connected
+                      <% end %>
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <%= if @current_user && @current_user.connection_permissions && (@current_user.connection_permissions.gmail_read || @current_user.connection_permissions.gmail_write) do %>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Connected
+                    </span>
+                  <% else %>
+                    <button phx-click="grant_permission" phx-value-service="gmail" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700">
+                      Connect
+                    </button>
+                  <% end %>
+                </div>
+              </div>
+              
+              <!-- Calendar Connection -->
+              <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                <div class="flex items-center space-x-3">
+                  <div class="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 class="font-medium text-gray-900">Google Calendar</h4>
+                    <p class="text-sm text-gray-500">
+                      <%= if @current_user && @current_user.connection_permissions && (@current_user.connection_permissions.calendar_read || @current_user.connection_permissions.calendar_write) do %>
+                        Connected - 
+                        <%= if @current_user.connection_permissions.calendar_read do %>Read<% end %>
+                        <%= if @current_user.connection_permissions.calendar_write do %>, Write<% end %>
+                      <% else %>
+                        Not connected
+                      <% end %>
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <%= if @current_user && @current_user.connection_permissions && (@current_user.connection_permissions.calendar_read || @current_user.connection_permissions.calendar_write) do %>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Connected
+                    </span>
+                  <% else %>
+                    <button phx-click="grant_permission" phx-value-service="calendar" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700">
+                      Connect
+                    </button>
+                  <% end %>
+                </div>
+              </div>
+              
+              <!-- HubSpot Connection -->
+              <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                <div class="flex items-center space-x-3">
+                  <div class="w-10 h-10 bg-orange-500 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M18.164 7.931V4.5a4.5 4.5 0 10-9 0v3.431a3.5 3.5 0 000 6.138V17.5a4.5 4.5 0 109 0v-3.431a3.5 3.5 0 000-6.138zM12 1.5a3 3 0 013 3v3.431a3.5 3.5 0 010 6.138V17.5a3 3 0 11-6 0v-3.431a3.5 3.5 0 010-6.138V4.5a3 3 0 013-3z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 class="font-medium text-gray-900">HubSpot</h4>
+                    <p class="text-sm text-gray-500">
+                      <%= if @current_user && @current_user.connection_permissions && @current_user.connection_permissions.hubspot do %>
+                        Connected
+                      <% else %>
+                        Not connected
+                      <% end %>
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <%= if @current_user && @current_user.connection_permissions && @current_user.connection_permissions.hubspot do %>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Connected
+                    </span>
+                  <% else %>
+                    <button phx-click="grant_permission" phx-value-service="hubspot" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700">
+                      Connect
+                    </button>
+                  <% end %>
+                </div>
+              </div>
+              
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
   <!-- Header -->
   <header class="bg-white border-b border-gray-200 px-4 py-4">
     <div class="flex items-center">
@@ -37,19 +162,28 @@
 
   <!-- Tab Navigation -->
   <div class="bg-white border-b border-gray-200 px-4">
-    <div class="flex space-x-6">
-      <button class="py-3 text-sm font-medium text-blue-600 border-b-2 border-blue-600">
-        Chat
-      </button>
-      <button class="py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
-        History
-      </button>
-      <div class="ml-auto flex items-center">
+    <div class="flex items-center justify-between">
+      <div class="flex space-x-6">
+        <button class="py-3 text-sm font-medium text-blue-600 border-b-2 border-blue-600">
+          Chat
+        </button>
+        <button class="py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+          History
+        </button>
+      </div>
+      <div class="flex items-center space-x-4">
         <button class="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
           </svg>
           <span>New thread</span>
+        </button>
+        <button phx-click="toggle_settings" class="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800 pr-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+          </svg>
+          <span>Settings</span>
         </button>
       </div>
     </div>

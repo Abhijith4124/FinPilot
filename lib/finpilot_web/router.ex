@@ -8,7 +8,6 @@ defmodule FinpilotWeb.Router do
     plug :put_root_layout, html: {FinpilotWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
-    plug FinpilotWeb.Auth
   end
 
   pipeline :api do
@@ -19,7 +18,7 @@ defmodule FinpilotWeb.Router do
     pipe_through :browser
 
     live "/", LandingPageLive.Index, :index
-    
+
     # OAuth routes
     get "/auth/google/callback", AuthController, :google_callback
     get "/auth/signout", AuthController, :signout
