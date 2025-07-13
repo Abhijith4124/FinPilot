@@ -1,4 +1,4 @@
-defmodule Finpilot.TaskRunner.Instruction do
+defmodule Finpilot.Tasks.Instruction do
   use Ecto.Schema
   import Ecto.Changeset
 

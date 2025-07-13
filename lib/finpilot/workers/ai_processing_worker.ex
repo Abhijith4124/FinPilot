@@ -9,60 +9,57 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   """
 
   use Oban.Worker, queue: :ai_processing
+  require Logger
 
-  alias Finpilot.TaskRunner
-  alias Finpilot.TaskRunner.{Task, Instruction}
+  alias Finpilot.Tasks.{Task, Instruction}
   alias Finpilot.Workers.ToolExecutor
   alias Finpilot.Services.OpenRouter
+  alias Finpilot.Services.Memory
   alias Finpilot.Repo
   import Ecto.Query
-
-  require Logger
 
   # Default AI model for processing
   @default_model "google/gemini-2.0-flash-001"
 
-
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"text" => text, "user_id" => user_id, "source" => source} = args}) do
+  def perform(%Oban.Job{
+        id: job_id,
+        args: %{"text" => text, "user_id" => user_id, "source" => source} = args
+      }) do
+    Logger.info("[AIProcessingWorker] Starting job #{job_id} for user #{user_id} from source #{source}")
+    Logger.debug("[AIProcessingWorker] Job args: #{inspect(args)}")
+
     user_id = ensure_binary_id(user_id)
 
-    Logger.info("[AIProcessingWorker] Starting AI processing for user #{user_id}, source: #{source}")
-    Logger.debug("[AIProcessingWorker] Processing text: #{String.slice(text, 0, 100)}#{if String.length(text) > 100, do: "...", else: ""}")
-
     # Build context with instructions, running tasks, and metadata
-    context = build_context(text, user_id, source, args)
-    Logger.info("[AIProcessingWorker] Context built with #{length(context.instructions)} instructions, #{length(context.running_tasks)} running tasks")
+    Logger.debug("[AIProcessingWorker] Building context for user #{user_id}")
+    context = build_context(text, user_id, source, args, job_id)
+    Logger.debug("[AIProcessingWorker] Context built with #{length(context.instructions)} instructions, #{length(context.running_tasks)} running tasks")
 
     # Call AI with direct tool calling
+    Logger.info("[AIProcessingWorker] Calling AI with tools for job #{job_id}")
     case call_ai_with_tools(context) do
       {:ok, :tool_call, _updated_messages, tool_calls} ->
-        Logger.info("[AIProcessingWorker] AI returned #{length(tool_calls)} tool calls")
-        execute_tools_and_continue(tool_calls, context)
-
-      {:ok, :message, updated_messages} ->
-        Logger.info("[AIProcessingWorker] AI returned conversational message")
-        # Extract the last assistant message
-        assistant_message = updated_messages
-        |> Enum.reverse()
-        |> Enum.find(fn msg -> msg["role"] == "assistant" end)
-        handle_conversational_response(assistant_message, context)
-
+        Logger.info("[AIProcessingWorker] AI returned #{length(tool_calls)} tool calls for job #{job_id}")
+        Logger.debug("[AIProcessingWorker] Tool calls: #{inspect(tool_calls)}")
+        result = execute_tool_calls(tool_calls, user_id)
+        Logger.info("[AIProcessingWorker] Job #{job_id} completed successfully")
+        {:ok, result}
       {:error, reason} ->
-        Logger.error("[AIProcessingWorker] AI call failed: #{reason}")
+        Logger.error("[AIProcessingWorker] AI processing failed for job #{job_id}: #{reason}")
         {:error, "AI processing failed: #{reason}"}
     end
   end
 
   # Ensure user_id is in binary format
   defp ensure_binary_id(user_id) when is_binary(user_id), do: user_id
-  defp ensure_binary_id(user_id) when is_integer(user_id), do: Integer.to_string(user_id)
   defp ensure_binary_id(user_id), do: to_string(user_id)
 
   # Build comprehensive context for AI processing with enhanced metadata
-  defp build_context(text, user_id, source, args) do
+  defp build_context(text, user_id, source, args, job_id) do
     instructions = get_active_instructions(user_id)
     running_tasks = get_running_tasks(user_id)
+    relevant_memory = get_relevant_memory(user_id, text)
 
     %{
       text: text,
@@ -71,15 +68,19 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       metadata: Map.drop(args, ["text", "user_id", "source"]),
       instructions: instructions,
       running_tasks: running_tasks,
+      relevant_memory: relevant_memory,
       timestamp: DateTime.utc_now(),
       process_id: self(),
-      node: Node.self()
+      node: Node.self(),
+      job_id: job_id
     }
   end
 
   # Get active instructions for the user
   defp get_active_instructions(user_id) do
-    from(i in Instruction,
+    Logger.debug("[AIProcessingWorker] Fetching active instructions for user #{user_id}")
+
+    instructions = from(i in Instruction,
       where: i.user_id == ^user_id and i.is_active == true,
       select: %{
         id: i.id,
@@ -91,211 +92,208 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       }
     )
     |> Repo.all()
+
+    Logger.debug("[AIProcessingWorker] Found #{length(instructions)} active instructions for user #{user_id}")
+    instructions
   end
 
   # Get running tasks for the user
   defp get_running_tasks(user_id) do
-    Logger.debug("[AIProcessingWorker] Querying running tasks for user #{user_id}")
+    Logger.debug("[AIProcessingWorker] Fetching running tasks for user #{user_id}")
 
     try do
-      tasks = from(t in Task,
-        where: t.user_id == ^user_id and t.is_done == false,
-        preload: [:task_stages]
-      )
-      |> Repo.all()
-      |> Enum.map(fn task ->
-        %{
-          id: task.id,
-          task_instruction: task.task_instruction,
-          current_stage_summary: task.current_stage_summary,
-          next_stage_instruction: task.next_stage_instruction,
-          context: task.context,
-          task_stages: task.task_stages
-        }
-      end)
+      tasks =
+        from(t in Task,
+          where: t.user_id == ^user_id and t.is_done == false,
+          preload: [:task_stages]
+        )
+        |> Repo.all()
+        |> Enum.map(fn task ->
+          %{
+            id: task.id,
+            task_instruction: task.task_instruction,
+            current_stage_summary: task.current_stage_summary,
+            next_stage_instruction: task.next_stage_instruction,
+            context: task.context,
+            task_stages: task.task_stages
+          }
+        end)
 
-      Logger.debug("[AIProcessingWorker] Successfully retrieved #{length(tasks)} running tasks")
+      Logger.debug("[AIProcessingWorker] Found #{length(tasks)} running tasks for user #{user_id}")
       tasks
     rescue
       e ->
-        Logger.error("[AIProcessingWorker] Error getting running tasks: #{inspect(e)}")
+        Logger.error("[AIProcessingWorker] Error fetching running tasks for user #{user_id}: #{inspect(e)}")
         []
     end
   end
 
+  # Get relevant memory (tasks and messages) using semantic search
+  defp get_relevant_memory(user_id, text) do
+    Logger.debug("[AIProcessingWorker] Fetching relevant memory for user #{user_id}")
+
+    try do
+      case Memory.find_relevant_context(user_id, text,
+             task_limit: 5,
+             message_limit: 10,
+             threshold: 0.7
+           ) do
+        {:ok, %{tasks: tasks, messages: messages}} ->
+          Logger.debug("[AIProcessingWorker] Found #{length(tasks)} relevant tasks and #{length(messages)} relevant messages for user #{user_id}")
+          %{
+            tasks: format_memory_tasks(tasks),
+            messages: format_memory_messages(messages)
+          }
+
+        {:error, reason} ->
+          Logger.warning("[AIProcessingWorker] Memory search failed for user #{user_id}: #{reason}")
+          %{tasks: [], messages: []}
+      end
+    rescue
+      e ->
+        Logger.error("[AIProcessingWorker] Error fetching relevant memory for user #{user_id}: #{inspect(e)}")
+        %{tasks: [], messages: []}
+    end
+  end
+
+  # Format memory tasks for AI context
+  defp format_memory_tasks(tasks) do
+    Enum.map(tasks, fn task ->
+      %{
+        id: task.id,
+        instruction: task.task_instruction,
+        status: if(task.is_done, do: "completed", else: "incomplete"),
+        created_at: task.inserted_at
+      }
+    end)
+  end
+
+  # Format memory messages for AI context
+  defp format_memory_messages(messages) do
+    Enum.map(messages, fn message ->
+      %{
+        id: message.id,
+        role: message.role,
+        content: message.message,
+        created_at: message.inserted_at
+      }
+    end)
+  end
+
   # Call AI with direct tool calling
   defp call_ai_with_tools(context) do
+    Logger.debug("[AIProcessingWorker] Building AI prompt for user #{context.user_id}")
     prompt = build_ai_prompt(context)
-    tool_definitions = get_tool_definitions()
+    Logger.debug("[AIProcessingWorker] Prompt length: #{String.length(prompt)} characters")
+
+    Logger.debug("[AIProcessingWorker] Getting tool definitions")
+    tool_definitions = ToolExecutor.tool_definitions()
     tools = OpenRouter.format_tools(tool_definitions)
+    Logger.debug("[AIProcessingWorker] Using #{length(tools)} tools")
+
     messages = [OpenRouter.user_message(prompt)]
 
-    Logger.debug("[AIProcessingWorker] Calling AI with #{length(tool_definitions)} tools")
-
-    OpenRouter.call_ai(@default_model, messages, [
+    Logger.info("[AIProcessingWorker] Calling OpenRouter AI with model #{@default_model}")
+    result = OpenRouter.call_ai(@default_model, messages,
       tools: tools,
       system_prompt: get_system_prompt()
-    ])
-  end
+    )
 
-  # Execute tool calls and handle recursive processing
-  defp execute_tools_and_continue(tool_calls, context) do
-    Logger.info("[AIProcessingWorker] Executing #{length(tool_calls)} tool calls")
-
-    # Execute all tool calls
-    results = execute_tool_calls(tool_calls, context.user_id)
-
-    # Only continue tasks if this is not already a task continuation to prevent infinite loops
-    continuation_results = if context.source != "task_continuation" do
-      # Check for tasks that need continuation
-      updated_tasks = get_tasks_needing_continuation(context.user_id)
-
-      # Process each task that needs continuation
-      Enum.map(updated_tasks, fn task ->
-        if should_continue_task?(task) do
-          continue_task_processing(task, context)
-        else
-          {:ok, "Task #{task.id} does not need continuation"}
-        end
-      end)
-    else
-      Logger.info("[AIProcessingWorker] Skipping task continuation to prevent recursive loops")
-      []
+    case result do
+      {:ok, :tool_call, _updated_messages, tool_calls} ->
+        Logger.info("[AIProcessingWorker] AI call successful, received #{length(tool_calls)} tool calls")
+      {:error, reason} ->
+        Logger.error("[AIProcessingWorker] AI call failed: #{reason}")
+      other ->
+        Logger.warning("[AIProcessingWorker] Unexpected AI response: #{inspect(other)}")
     end
 
-    Logger.info("[AIProcessingWorker] Tool execution completed with #{length(continuation_results)} task continuations")
-    {:ok, %{tool_results: results, continuation_results: continuation_results}}
-  end
-
-  # Handle conversational AI responses
-  defp handle_conversational_response(message, context) do
-    content = message["content"] || "I understand your message. How can I help you?"
-
-    case context.source do
-      "chat" ->
-        session_id = context.metadata["session_id"]
-        if session_id do
-          case Finpilot.ChatMessages.create_assistant_message(session_id, context.user_id, content) do
-            {:ok, _message} ->
-              Logger.info("[AIProcessingWorker] Created conversational response")
-              {:ok, "Conversational response created"}
-            {:error, reason} ->
-              Logger.error("[AIProcessingWorker] Failed to create response: #{inspect(reason)}")
-              {:error, "Failed to create response"}
-          end
-        else
-          Logger.error("[AIProcessingWorker] No session_id for chat response")
-          {:error, "No session_id provided"}
-        end
-      _ ->
-        Logger.info("[AIProcessingWorker] Conversational response for #{context.source}: #{content}")
-        {:ok, "Conversational response processed"}
-    end
+    result
   end
 
   # Execute individual tool calls with better error handling
   defp execute_tool_calls(tool_calls, user_id) do
-    Logger.info("[AIProcessingWorker] Starting execution of #{length(tool_calls)} tool calls for user #{user_id}")
-    
-    Enum.map(tool_calls, fn tool_call ->
+    Logger.info("[AIProcessingWorker] Executing #{length(tool_calls)} tool calls for user #{user_id}")
+
+    Enum.with_index(tool_calls, 1)
+    |> Enum.map(fn {tool_call, index} ->
       try do
         tool_name = tool_call["function"]["name"]
         tool_args = Jason.decode!(tool_call["function"]["arguments"])
 
-        Logger.info("[AIProcessingWorker] Executing tool: #{tool_name} with args: #{inspect(tool_args)}")
+        Logger.info("[AIProcessingWorker] Executing tool #{index}/#{length(tool_calls)}: #{tool_name} for user #{user_id}")
+        Logger.debug("[AIProcessingWorker] Tool args: #{inspect(tool_args)}")
 
         case ToolExecutor.execute_tool(tool_name, tool_args, user_id) do
           {:ok, result} ->
-            Logger.info("[AIProcessingWorker] Tool #{tool_name} executed successfully: #{inspect(result)}")
+            Logger.info("[AIProcessingWorker] Tool #{tool_name} executed successfully for user #{user_id}")
+            Logger.debug("[AIProcessingWorker] Tool result: #{inspect(result)}")
             {:ok, result}
+
           {:error, reason} ->
-            Logger.error("[AIProcessingWorker] Tool #{tool_name} failed: #{inspect(reason)}")
+            Logger.error("[AIProcessingWorker] Tool #{tool_name} failed for user #{user_id}: #{reason}")
             {:error, reason}
         end
       rescue
         e ->
-          Logger.error("[AIProcessingWorker] Exception in tool execution: #{inspect(e)}")
+          Logger.error("[AIProcessingWorker] Tool execution exception for user #{user_id}: #{inspect(e)}")
+          Logger.error("[AIProcessingWorker] Tool call that caused exception: #{inspect(tool_call)}")
           {:error, "Tool execution exception: #{inspect(e)}"}
       end
     end)
   end
 
-  # Get tasks that might need continuation after tool execution
-  defp get_tasks_needing_continuation(user_id) do
-    from(t in Task,
-      where: t.user_id == ^user_id and t.is_done == false and not is_nil(t.next_stage_instruction),
-      preload: [:task_stages]
-    )
-    |> Repo.all()
-  end
-
-  # Check if a task should continue processing
-  defp should_continue_task?(task) do
-    # Task should continue if it has a next stage and conditions are met
-    not is_nil(task.next_stage_instruction) and
-    not task.is_done and
-    task.next_stage_instruction != ""
-  end
-
-  # Continue processing a task recursively
-  defp continue_task_processing(task, original_context) do
-    # Create new context for task continuation
-    continuation_context = %{
-      text: "Continue task: #{task.next_stage_instruction}",
-      user_id: task.user_id,
-      source: "task_continuation",
-      metadata: %{
-        "task_id" => task.id,
-        "original_source" => original_context.source
-      },
-      instructions: original_context.instructions,
-      running_tasks: [task],
-      timestamp: DateTime.utc_now()
-    }
-
-    Logger.info("[AIProcessingWorker] Continuing task #{task.id} recursively")
-
-    # Recursively call AI for task continuation
-    case call_ai_with_tools(continuation_context) do
-      {:ok, :tool_call, _updated_messages, tool_calls} ->
-        execute_tools_and_continue(tool_calls, continuation_context)
-      {:ok, :message, updated_messages} ->
-        # Extract the last assistant message
-        assistant_message = updated_messages
-        |> Enum.reverse()
-        |> Enum.find(fn msg -> msg["role"] == "assistant" end)
-        handle_conversational_response(assistant_message, continuation_context)
-      {:error, reason} ->
-        Logger.error("[AIProcessingWorker] Task continuation failed: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
   # Get system prompt for AI
   defp get_system_prompt do
     """
-    You are FinPilot, an intelligent AI assistant that helps users manage their business operations.
+    You are FinPilot, an intelligent AI assistant that manages business operations through structured tool calls.
 
-    Your role is to:
+    CRITICAL: You MUST ONLY respond using tool calls. Never provide text responses or explanations outside of tool calls.
+
+    Your responsibilities:
     1. Analyze incoming text from various sources (chat, email, calendar, CRM, etc.)
-    2. Understand user instructions and running tasks
-    3. Respond ONLY through tool calls - never send direct messages
-    4. Create, update, and manage tasks with multiple stages
-    5. Execute business operations like sending emails, scheduling meetings, updating CRM
+    2. Execute appropriate actions using the available tools
+    3. Create and manage multi-stage tasks
+    4. Send messages to users via the assistant_message tool
+    5. Perform business operations like email sending, meeting scheduling, CRM updates
 
-    IMPORTANT RULES:
-    - You MUST respond only with tool calls, never direct messages
-    - If you need to communicate with the user, use the 'create_assistant_message' or 'create_system_notification' tools
-    - Tasks can have multiple stages and may require recursive processing
-    - Always consider the context of running tasks and user instructions
-    - Be proactive in identifying actionable items from the incoming text
+    CONTEXT SECTIONS:
 
-    Available tools allow you to:
-    - Send emails and schedule meetings
-    - Create and update CRM contacts
-    - Manage tasks and task stages
-    - Create chat messages and system notifications
-    - Wait for future responses when needed
+    INCOMING TEXT:
+    - Source: Origin of the text (chat, email, webhook, task_continuation, etc.)
+    - Content: The actual message/text to process
+    - Timestamp: When this processing request was made
+    - Metadata: Additional context (session_id, task_id, continuation_depth, etc.)
+
+    ACTIVE INSTRUCTIONS:
+    - User-defined automation rules and preferences
+    - Persistent instructions that guide all decisions for this user
+    - Use these to understand workflow preferences and automation triggers
+
+    RUNNING TASKS:
+    - Currently active, incomplete tasks
+    - Shows: task ID, instruction, current stage, next stage
+    - Avoid duplicating work already in progress
+    - Consider updating existing tasks instead of creating new ones
+
+    RELEVANT MEMORY:
+    - Semantically similar past tasks and messages
+    - Helps avoid repeating previous work
+    - Use for informed decision-making about task creation/updates
+    - Empty for task continuations to prevent infinite loops
+
+    TOOL USAGE RULES:
+    1. ALWAYS use tool calls - never respond with plain text
+    2. Use assistant_message tool to communicate with users
+    3. Use create_task tool for actionable items that require multiple steps
+    4. Use update_task tool to progress existing tasks
+    5. Use complete_task tool when tasks are finished
+    6. Only create tasks for actions supported by available tools
+    7. Be proactive in identifying actionable items from incoming text
+    8. Consider context from running tasks and user instructions
+    9. Use relevant memory to avoid duplicating previous decisions
+
+    Remember: Every response must be a tool call. Use assistant_message for any communication needs.
     """
   end
 
@@ -318,18 +316,18 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     RUNNING TASKS:
     #{tasks_text}
 
-    Please analyze this incoming text and respond with appropriate tool calls to handle any:
-    1. New tasks that need to be created
-    2. Updates to existing running tasks
-    3. Communications that need to be sent
-    4. Business operations that need to be performed
+    RELEVANT MEMORY:
+    #{memory_text}
 
-    Remember: Respond ONLY with tool calls, never direct messages.
+    Please analyze this incoming text and respond appropriately using tool calls for actions or direct messages for communication.
+
+    Use the relevant memory context to make informed decisions and avoid duplicating previous work.
     """
   end
 
   # Format instructions for AI prompt
   defp format_instructions([]), do: "No active instructions."
+
   defp format_instructions(instructions) do
     instructions
     |> Enum.map(fn instruction ->
@@ -340,6 +338,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
 
   # Format running tasks for AI prompt
   defp format_running_tasks([]), do: "No running tasks."
+
   defp format_running_tasks(tasks) do
     tasks
     |> Enum.map(fn task ->
@@ -353,169 +352,43 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     |> Enum.join("\n---\n")
   end
 
-  # AI Tool Definitions
-  defp get_tool_definitions do
-    [
-      %{
-        name: "send_email",
-        description: "Send an email to one or more recipients",
-        parameters: %{
-          type: "object",
-          properties: %{
-            to: %{
-              type: "array",
-              items: %{type: "string"},
-              description: "Email addresses of recipients"
-            },
-            subject: %{type: "string", description: "Email subject line"},
-            body: %{type: "string", description: "Email body content"},
-            cc: %{
-              type: "array",
-              items: %{type: "string"},
-              description: "CC recipients (optional)"
-            },
-            bcc: %{
-              type: "array",
-              items: %{type: "string"},
-              description: "BCC recipients (optional)"
-            }
-          },
-          required: ["to", "subject", "body"]
-        }
-      },
-      %{
-        name: "schedule_meeting",
-        description: "Schedule a meeting with participants",
-        parameters: %{
-          type: "object",
-          properties: %{
-            title: %{type: "string", description: "Meeting title"},
-            attendees: %{
-              type: "array",
-              items: %{type: "string"},
-              description: "Email addresses of attendees"
-            },
-            start_time: %{
-              type: "string",
-              format: "date-time",
-              description: "Meeting start time in ISO 8601 format"
-            },
-            end_time: %{
-              type: "string",
-              format: "date-time",
-              description: "Meeting end time in ISO 8601 format"
-            },
-            description: %{type: "string", description: "Meeting description (optional)"},
-            location: %{type: "string", description: "Meeting location (optional)"}
-          },
-          required: ["title", "attendees", "start_time", "end_time"]
-        }
-      },
-      %{
-        name: "update_crm",
-        description: "Update CRM system with contact or deal information",
-        parameters: %{
-          type: "object",
-          properties: %{
-            contact_email: %{type: "string", description: "Contact's email address"},
-            action: %{
-              type: "string",
-              enum: ["create_contact", "update_contact", "create_deal", "update_deal"],
-              description: "CRM action to perform"
-            },
-            data: %{type: "object", description: "Data to update in CRM"}
-          },
-          required: ["contact_email", "action", "data"]
-        }
-      },
-      %{
-        name: "create_task",
-        description: "Create a new task in the TaskRunner system",
-        parameters: %{
-          type: "object",
-          properties: %{
-            task_instruction: %{
-              type: "string",
-              description: "Natural language instruction for the task"
-            },
-            context: %{type: "object", description: "Initial context data for the task"}
-          },
-          required: ["task_instruction"]
-        }
-      },
-      %{
-        name: "update_task_stage",
-        description: "Update the current stage of an existing task",
-        parameters: %{
-          type: "object",
-          properties: %{
-            task_id: %{type: "string", description: "ID of the task to update"},
-            new_stage: %{type: "string", description: "New stage name"},
-            stage_result: %{type: "object", description: "Result data from the current stage"}
-          },
-          required: ["task_id", "new_stage"]
-        }
-      },
-      %{
-        name: "create_assistant_message",
-        description: "Create an assistant message in a chat session",
-        parameters: %{
-          type: "object",
-          properties: %{
-            session_id: %{type: "string", description: "Chat session ID"},
-            content: %{type: "string", description: "Message content to send to the user"}
-          },
-          required: ["session_id", "content"]
-        }
-      },
-      %{
-        name: "create_system_notification",
-        description: "Create a system notification for the user",
-        parameters: %{
-          type: "object",
-          properties: %{
-            title: %{type: "string", description: "Notification title"},
-            message: %{type: "string", description: "Notification message content"},
-            type: %{
-              type: "string",
-              enum: ["info", "success", "warning", "error"],
-              description: "Type of notification"
-            },
-            metadata: %{type: "object", description: "Additional metadata for the notification"}
-          },
-          required: ["title", "message"]
-        }
-      },
-      %{
-        name: "wait_for_response",
-        description: "Set a task to wait for external response (event-driven, no timeout)",
-        parameters: %{
-          type: "object",
-          properties: %{
-            task_id: %{type: "string", description: "ID of the task to set waiting"},
-            wait_type: %{
-              type: "string",
-              enum: ["email", "meeting_response", "manual_input"],
-              description: "Type of response to wait for"
-            },
-            thread_id: %{
-              type: "string",
-              description: "Email thread ID for email responses (optional)"
-            },
-            sender_email: %{
-              type: "string",
-              description: "Expected sender email for email responses (optional)"
-            },
-            response_type: %{type: "string", description: "Expected type of response (optional)"},
-            context_update: %{type: "object", description: "Context data to update while waiting"}
-          },
-          required: ["task_id", "wait_type"]
-        }
-      }
-    ]
+  # Format relevant memory for AI prompt
+  defp format_relevant_memory(%{tasks: [], messages: []}), do: "No relevant memory found."
+
+  defp format_relevant_memory(%{tasks: tasks, messages: messages}) do
+    tasks_section =
+      if Enum.empty?(tasks) do
+        "No relevant tasks."
+      else
+        "RELEVANT TASKS:\n" <>
+          (tasks
+           |> Enum.map(fn task ->
+             "- [#{task.status}] #{task.instruction} (#{format_date(task.created_at)})"
+           end)
+           |> Enum.join("\n"))
+      end
+
+    messages_section =
+      if Enum.empty?(messages) do
+        "No relevant messages."
+      else
+        "RELEVANT MESSAGES:\n" <>
+          (messages
+           |> Enum.map(fn message ->
+             "- [#{message.role}] #{String.slice(message.content, 0, 100)}#{if String.length(message.content) > 100, do: "...", else: ""} (#{format_date(message.created_at)})"
+           end)
+           |> Enum.join("\n"))
+      end
+
+    "#{tasks_section}\n\n#{messages_section}"
   end
 
-
-
-
+  # Format date for display
+  defp format_date(datetime) do
+    case datetime do
+      %DateTime{} -> DateTime.to_string(datetime)
+      %NaiveDateTime{} -> NaiveDateTime.to_string(datetime)
+      _ -> "Unknown date"
+    end
+  end
 end

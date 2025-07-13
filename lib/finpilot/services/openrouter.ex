@@ -4,6 +4,8 @@ defmodule Finpilot.Services.OpenRouter do
   Provides generic functions for AI interactions including completions and tool calling.
   """
 
+  require Logger
+
   # Default AI model to use when none is specified
   @default_model "google/gemini-2.0-flash-001"
 
@@ -40,7 +42,9 @@ defmodule Finpilot.Services.OpenRouter do
 
       # Add tools if provided
       request_body = if length(tools) > 0 do
-        Map.put(request_body, "tools", tools)
+        request_body
+        |> Map.put("tools", tools)
+        |> Map.put("tool_choice", "auto")  # Explicitly enable tool calling
       else
         request_body
       end
@@ -136,8 +140,12 @@ defmodule Finpilot.Services.OpenRouter do
 
     body = Jason.encode!(request_body)
 
+    Logger.info("Making OpenRouter API request with model: #{request_body["model"]}")
+    Logger.debug("Request body: #{Jason.encode!(request_body, pretty: true)}")
+
     case Finch.build(:post, url, headers, body) |> Finch.request(Finpilot.Finch) do
       {:ok, %Finch.Response{status: 200, body: response_body}} ->
+        Logger.debug("OpenRouter response: #{response_body}")
         case Jason.decode(response_body) do
           {:ok, response} -> {:ok, response}
           {:error, _} -> {:error, "Failed to parse API response"}
@@ -213,11 +221,8 @@ defmodule Finpilot.Services.OpenRouter do
   Converts tool definitions to OpenAI-compatible format.
   """
   def format_tools(tools) when is_list(tools) do
-    Enum.map(tools, fn tool ->
-      %{
-        "type" => "function",
-        "function" => tool
-      }
-    end)
+    # Tools from ToolExecutor already have the correct format with "type" and "function" keys
+    # Just return them as-is since they're already properly formatted
+    tools
   end
 end

@@ -1,4 +1,4 @@
-defmodule Finpilot.TaskRunner.Task do
+defmodule Finpilot.Tasks.Task do
   use Ecto.Schema
   import Ecto.Changeset
 
@@ -12,7 +12,7 @@ defmodule Finpilot.TaskRunner.Task do
     field :is_done, :boolean, default: false
     field :embedding, Pgvector.Ecto.Vector
     belongs_to :user, Finpilot.Accounts.User
-    has_many :task_stages, Finpilot.TaskRunner.TaskStage
+    has_many :task_stages, Finpilot.Tasks.TaskStage
 
     timestamps(type: :utc_datetime)
   end

@@ -1,4 +1,4 @@
-defmodule Finpilot.TaskRunner.Processor do
+defmodule Finpilot.Tasks.Processor do
   @moduledoc """
   Main interface for triggering AI processing of text/events.
   This module provides a simple API to queue text for AI analysis
@@ -26,9 +26,13 @@ defmodule Finpilot.TaskRunner.Processor do
       {:ok, %Oban.Job{}}
   """
   def process_text(text, user_id, source, metadata \\ %{}) do
-    Logger.info("[Processor] Enqueuing AI processing job for user #{user_id}, source: #{source}")
-    Logger.debug("[Processor] Text length: #{String.length(text)} characters")
-    Logger.debug("[Processor] Metadata: #{inspect(metadata)}")
+    # Generate a unique request ID for tracking
+    request_id = :crypto.strong_rand_bytes(8) |> Base.encode16()
+    Logger.info("[Processor][#{request_id}] Enqueuing AI processing job for user #{user_id}, source: #{source}")
+    Logger.info("[Processor][#{request_id}] Process PID: #{inspect(self())}, Node: #{node()}")
+    Logger.debug("[Processor][#{request_id}] Text length: #{String.length(text)} characters")
+    Logger.debug("[Processor][#{request_id}] Metadata: #{inspect(metadata)}")
+    Logger.debug("[Processor][#{request_id}] Stack trace: #{inspect(Process.info(self(), :current_stacktrace))}")
     
     job_args = %{
       "text" => text,
@@ -43,10 +47,10 @@ defmodule Finpilot.TaskRunner.Processor do
     
     case result do
       {:ok, job} ->
-        Logger.info("[Processor] AI processing job enqueued successfully with ID: #{job.id}")
+        Logger.info("[Processor][#{request_id}] AI processing job enqueued successfully with ID: #{job.id}")
         result
       {:error, reason} ->
-        Logger.error("[Processor] Failed to enqueue AI processing job: #{inspect(reason)}")
+        Logger.error("[Processor][#{request_id}] Failed to enqueue AI processing job: #{inspect(reason)}")
         result
     end
   end
@@ -73,7 +77,11 @@ defmodule Finpilot.TaskRunner.Processor do
   The AI will determine if this is an instruction or a regular chat message.
   """
   def process_chat(message, user_id, session_id) do
-    Logger.info("[Processor] Processing chat message for user #{user_id}, session: #{session_id}")
+    # Generate a unique request ID for tracking
+    chat_request_id = :crypto.strong_rand_bytes(8) |> Base.encode16()
+    Logger.info("[Processor][#{chat_request_id}] Processing chat message for user #{user_id}, session: #{session_id}")
+    Logger.info("[Processor][#{chat_request_id}] Chat process PID: #{inspect(self())}, Node: #{node()}")
+    Logger.debug("[Processor][#{chat_request_id}] Chat stack trace: #{inspect(Process.info(self(), :current_stacktrace))}")
     
     metadata = %{
       "session_id" => session_id,
@@ -84,9 +92,9 @@ defmodule Finpilot.TaskRunner.Processor do
     
     case result do
       {:ok, _job} ->
-        Logger.info("[Processor] Chat processing job enqueued successfully")
+        Logger.info("[Processor][#{chat_request_id}] Chat processing job enqueued successfully")
       {:error, reason} ->
-        Logger.error("[Processor] Failed to enqueue chat processing job: #{inspect(reason)}")
+        Logger.error("[Processor][#{chat_request_id}] Failed to enqueue chat processing job: #{inspect(reason)}")
     end
     
     result

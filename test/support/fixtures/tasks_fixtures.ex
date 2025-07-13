@@ -1,7 +1,7 @@
-defmodule Finpilot.TaskRunnerFixtures do
+defmodule Finpilot.TasksFixtures do
   @moduledoc """
   This module defines test helpers for creating
-  entities via the `Finpilot.TaskRunner` context.
+  entities via the `Finpilot.Tasks` context.
   """
 
   @doc """
@@ -17,7 +17,7 @@ defmodule Finpilot.TaskRunnerFixtures do
         next_stage_instruction: "some next_stage_instruction",
         task_instruction: "some task_instruction"
       })
-      |> Finpilot.TaskRunner.create_task()
+      |> Finpilot.Tasks.create_task()
 
     task
   end
@@ -40,7 +40,7 @@ defmodule Finpilot.TaskRunnerFixtures do
         tool_params: %{},
         tool_result: %{}
       })
-      |> Finpilot.TaskRunner.create_task_stage()
+      |> Finpilot.Tasks.create_task_stage()
 
     task_stage
   end
@@ -59,7 +59,7 @@ defmodule Finpilot.TaskRunnerFixtures do
         name: "some name",
         trigger_conditions: %{}
       })
-      |> Finpilot.TaskRunner.create_instruction()
+      |> Finpilot.Tasks.create_instruction()
 
     instruction
   end

@@ -1,381 +1,428 @@
 defmodule Finpilot.Workers.ToolExecutor do
   @moduledoc """
-  Handles execution of AI-selected tools within the TaskRunner system.
+  Handles execution of AI-selected tools within the Tasks system.
   This module provides a centralized way to execute various tools
-  that the AI can call to complete tasks.
+  that the AI can call to complete tasks and manage chat messages.
   """
 
-  # alias Finpilot.Services.Gmail  # TODO: Uncomment when Gmail service is implemented
-  alias Finpilot.TaskRunner
-  alias Finpilot.Accounts
   require Logger
+  alias Finpilot.Tasks
+  alias Finpilot.ChatMessages
 
   @doc """
-  Execute a tool with given parameters for a specific user.
+  Execute a tool with the given name, arguments, and user context.
+  
+  ## Examples
+  
+      iex> ToolExecutor.execute_tool("create_task", %{"task_instruction" => "Send email"}, user_id)
+      {:ok, %Task{}}
+      
+      iex> ToolExecutor.execute_tool("create_assistant_message", %{"session_id" => "123", "message" => "Hello"}, user_id)
+      {:ok, %ChatMessage{}}
+      
+      iex> ToolExecutor.execute_tool("create_system_message", %{"session_id" => "123", "message" => "System ready"}, user_id)
+      {:ok, %ChatMessage{}}
   """
-  def execute_tool(tool_name, params, user_id) do
-    Logger.info("Executing tool: #{tool_name} for user: #{user_id}")
-    
+  def execute_tool(tool_name, args, user_id) do
     case tool_name do
-      "send_email" -> execute_send_email(params, user_id)
-      "schedule_meeting" -> execute_schedule_meeting(params, user_id)
-      "update_crm" -> execute_update_crm(params, user_id)
-      "create_task" -> execute_create_task(params, user_id)
-      "update_task_stage" -> execute_update_task_stage(params, user_id)
-      "wait_for_response" -> execute_wait_for_response(params, user_id)
-      "create_assistant_message" -> execute_create_assistant_message(params, user_id)
-      "create_system_notification" -> execute_create_system_notification(params, user_id)
+      "create_assistant_message" -> create_assistant_message(args, user_id)
+      "create_system_message" -> create_system_message(args, user_id)
+      "create_task" -> create_task(args, user_id)
+      "edit_task" -> edit_task(args, user_id)
+      "create_task_stage" -> create_task_stage(args, user_id)
+      "edit_task_stage" -> edit_task_stage(args, user_id)
       _ -> {:error, "Unknown tool: #{tool_name}"}
     end
   end
 
-  # Send email using Gmail service
-  defp execute_send_email(params, user_id) do
-    with {:ok, _user} <- get_user(user_id),
-         {:ok, _} <- validate_email_params(params) do
-      
-      # Prepare email data
-      email_data = %{
-        to: params["to"],
-        subject: params["subject"],
-        body: params["body"],
-        cc: params["cc"] || [],
-        bcc: params["bcc"] || []
-      }
-      
-      # TODO: Implement actual email sending via Gmail service
-      # Gmail.send_email(user, email_data)
-      
-      Logger.info("Email would be sent: #{inspect(email_data)}")
-      {:ok, %{action: "email_sent", recipients: params["to"], subject: params["subject"]}}
-    else
-      error -> error
-    end
-  end
-
-  # Schedule meeting using Calendar service
-  defp execute_schedule_meeting(params, user_id) do
-    with {:ok, _user} <- get_user(user_id),
-         {:ok, _} <- validate_meeting_params(params) do
-      
-      # Prepare meeting data
-      meeting_data = %{
-        title: params["title"],
-        attendees: params["attendees"],
-        start_time: params["start_time"],
-        end_time: params["end_time"],
-        description: params["description"],
-        location: params["location"]
-      }
-      
-      # TODO: Implement actual meeting scheduling via Calendar service
-      # Calendar.schedule_meeting(user, meeting_data)
-      
-      Logger.info("Meeting would be scheduled: #{inspect(meeting_data)}")
-      {:ok, %{action: "meeting_scheduled", title: params["title"], attendees: params["attendees"]}}
-    else
-      error -> error
-    end
-  end
-
-  # Update CRM system
-  defp execute_update_crm(params, user_id) do
-    with {:ok, _user} <- get_user(user_id),
-         {:ok, _} <- validate_crm_params(params) do
-      
-      # Prepare CRM data
-      crm_data = %{
-        contact_email: params["contact_email"],
-        action: params["action"],
-        data: params["data"]
-      }
-      
-      # TODO: Implement actual CRM update via HubSpot service
-      # Hubspot.update_contact(user, crm_data)
-      
-      Logger.info("CRM would be updated: #{inspect(crm_data)}")
-      {:ok, %{action: "crm_updated", contact: params["contact_email"], crm_action: params["action"]}}
-    else
-      error -> error
-    end
-  end
-
-  # Create a new task
-  defp execute_create_task(params, user_id) do
-    task_attrs = %{
-      task_instruction: params["task_instruction"],
-      current_stage_summary: "Task has been created and is ready for AI analysis",
-      next_stage_instruction: "Analyze the task instruction and determine what tools and actions are needed to complete it",
-      is_done: false,
-      context: params["context"] || %{},
-      user_id: user_id
-    }
-    
-    case TaskRunner.create_task(task_attrs) do
-      {:ok, task} ->
-        # Create initial task stage
-        stage_attrs = %{
-          task_id: task.id,
-          stage_name: "created",
-          stage_type: "system",
-          tool_name: "create_task",
-          tool_params: params,
-          tool_result: %{task_id: task.id},
-          ai_reasoning: "Task created from AI analysis",
-          status: "completed",
-          started_at: DateTime.utc_now(),
-          completed_at: DateTime.utc_now()
-        }
-        
-        TaskRunner.create_task_stage(stage_attrs)
-        {:ok, %{action: "task_created", task_id: task.id, instruction: params["task_instruction"]}}
-      
-      {:error, changeset} ->
-        {:error, "Failed to create task: #{inspect(changeset.errors)}"}
-    end
-  end
-
-  # Update task stage
-  defp execute_update_task_stage(params, user_id) do
-    task_id = params["task_id"]
-    new_stage = params["new_stage"]
-    stage_result = params["stage_result"] || %{}
-    
-    case TaskRunner.get_task(task_id) do
-      {:ok, %TaskRunner.Task{user_id: ^user_id} = task} ->
-        # Create new task stage record
-        stage_attrs = %{
-          task_id: task_id,
-          stage_name: new_stage,
-          stage_type: "ai_transition",
-          tool_name: "update_task_stage",
-          tool_params: params,
-          tool_result: stage_result,
-          ai_reasoning: "Stage updated via AI decision",
-          status: "completed",
-          started_at: DateTime.utc_now(),
-          completed_at: DateTime.utc_now()
-        }
-        
-        # Generate natural language stage summary and instruction
-        stage_summary = case new_stage do
-          "analyzing" -> "Task is being analyzed to determine required actions"
-          "executing" -> "Task actions are being executed"
-          "waiting_for_response" -> "Task is waiting for external response"
-          "completed" -> "Task has been completed successfully"
-          _ -> "Task is in progress: #{new_stage}"
-        end
-        
-        next_instruction = case new_stage do
-          "analyzing" -> "Determine what tools and actions are needed to complete the task"
-          "executing" -> "Execute the required actions and tools to complete the task"
-          "waiting_for_response" -> "Wait for the required response and process it when received"
-          "completed" -> "No further action needed - task is done"
-          _ -> "Continue with the next appropriate action based on current context"
-        end
-        
-        with {:ok, _stage} <- TaskRunner.create_task_stage(stage_attrs),
-             {:ok, _updated_task} <- TaskRunner.update_task(task, %{
-               current_stage_summary: stage_summary,
-               next_stage_instruction: next_instruction,
-               context: Map.merge(task.context, stage_result)
-             }) do
-          {:ok, %{action: "task_stage_updated", task_id: task_id, new_stage: new_stage}}
-        else
-          {:error, changeset} ->
-            {:error, "Failed to update task stage: #{inspect(changeset.errors)}"}
-        end
-      
-      {:error, :not_found} ->
-        {:error, "Task #{task_id} not found"}
-      
-      {:ok, _} ->
-        {:error, "Task #{task_id} does not belong to user"}
-    end
-  end
-
-  # Set task to wait for response (event-driven, no timeout)
-  defp execute_wait_for_response(params, user_id) do
-    task_id = params["task_id"]
-    wait_type = params["wait_type"]
-    context_update = params["context_update"] || %{}
-    
-    case TaskRunner.get_task(task_id) do
-      {:ok, %TaskRunner.Task{user_id: ^user_id} = task} ->
-        # Update task context with waiting information
-        wait_context = Map.merge(context_update, %{
-          "waiting_for" => wait_type,
-          "wait_started_at" => DateTime.utc_now()
-        })
-        
-        # Prepare task update attributes with natural language
-        stage_summary = "Waiting for #{wait_type} response from #{params["sender_email"] || "recipient"}"
-        next_instruction = case wait_type do
-          "email" -> "Process the email reply when received and extract relevant information"
-          _ -> "Process the response when received and determine next actions"
-        end
-        
-        task_update_attrs = %{
-          current_stage_summary: stage_summary,
-          next_stage_instruction: next_instruction,
-          context: Map.merge(task.context, wait_context)
-        }
-        
-        # Email-specific context is now stored in the context map
-        task_update_attrs = if wait_type == "email" do
-          email_context = %{
-            "thread_id" => params["thread_id"],
-            "waiting_for_sender" => params["sender_email"],
-            "expected_response_type" => params["response_type"] || "email_reply"
+  @doc """
+  Returns tool definitions for LLM integration.
+  These definitions can be used with OpenRouter or other LLM providers.
+  """
+  def tool_definitions do
+    [
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_assistant_message",
+          "description" => "Create an assistant message in a chat session",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "session_id" => %{
+                "type" => "string",
+                "description" => "The ID of the chat session"
+              },
+              "message" => %{
+                "type" => "string",
+                "description" => "The message content from the assistant"
+              }
+            },
+            "required" => ["session_id", "message"]
           }
-          Map.update(task_update_attrs, :context, email_context, &Map.merge(&1, email_context))
-        else
-          task_update_attrs
-        end
-        
-        # Create waiting stage
-        stage_attrs = %{
-          task_id: task_id,
-          stage_name: "waiting_#{wait_type}",
-          stage_type: "wait",
-          tool_name: "wait_for_response",
-          tool_params: params,
-          tool_result: %{wait_type: wait_type},
-          ai_reasoning: "Task set to wait for #{wait_type}",
-          status: "waiting",
-          started_at: DateTime.utc_now()
         }
-        
-        with {:ok, _stage} <- TaskRunner.create_task_stage(stage_attrs),
-             {:ok, _updated_task} <- TaskRunner.update_task(task, task_update_attrs) do
-          
-          {:ok, %{action: "task_waiting", task_id: task_id, wait_type: wait_type}}
-        else
-          {:error, changeset} ->
-            {:error, "Failed to set task waiting: #{inspect(changeset.errors)}"}
-        end
-      
-      {:error, :not_found} ->
-        {:error, "Task #{task_id} not found"}
-      
-      {:ok, _} ->
-        {:error, "Task #{task_id} does not belong to user"}
-    end
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_system_message",
+          "description" => "Create a system message in a chat session",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "session_id" => %{
+                "type" => "string",
+                "description" => "The ID of the chat session"
+              },
+              "message" => %{
+                "type" => "string",
+                "description" => "The system message content"
+              }
+            },
+            "required" => ["session_id", "message"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_task",
+          "description" => "Create a new task for the user",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "task_instruction" => %{
+                "type" => "string",
+                "description" => "The main instruction or description of the task"
+              },
+              "current_stage_summary" => %{
+                "type" => "string",
+                "description" => "Summary of the current stage of the task"
+              },
+              "next_stage_instruction" => %{
+                "type" => "string",
+                "description" => "Instruction for the next stage of the task"
+              },
+              "context" => %{
+                "type" => "object",
+                "description" => "Additional context data for the task"
+              }
+            },
+            "required" => ["task_instruction", "current_stage_summary", "next_stage_instruction"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "edit_task",
+          "description" => "Edit an existing task",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "task_id" => %{
+                "type" => "string",
+                "description" => "The ID of the task to edit"
+              },
+              "task_instruction" => %{
+                "type" => "string",
+                "description" => "Updated task instruction"
+              },
+              "current_stage_summary" => %{
+                "type" => "string",
+                "description" => "Updated current stage summary"
+              },
+              "next_stage_instruction" => %{
+                "type" => "string",
+                "description" => "Updated next stage instruction"
+              },
+              "is_done" => %{
+                "type" => "boolean",
+                "description" => "Whether the task is completed"
+              },
+              "context" => %{
+                "type" => "object",
+                "description" => "Updated context data"
+              }
+            },
+            "required" => ["task_id"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_task_stage",
+          "description" => "Create a new stage for a task",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "task_id" => %{
+                "type" => "string",
+                "description" => "The ID of the task this stage belongs to"
+              },
+              "stage_name" => %{
+                "type" => "string",
+                "description" => "Name of the stage"
+              },
+              "stage_type" => %{
+                "type" => "string",
+                "description" => "Type of the stage (e.g., 'email', 'api_call', 'user_input')"
+              },
+              "tool_name" => %{
+                "type" => "string",
+                "description" => "Name of the tool to be used in this stage"
+              },
+              "tool_params" => %{
+                "type" => "object",
+                "description" => "Parameters for the tool"
+              },
+              "ai_reasoning" => %{
+                "type" => "string",
+                "description" => "AI's reasoning for this stage"
+              },
+              "status" => %{
+                "type" => "string",
+                "description" => "Status of the stage (e.g., 'pending', 'in_progress', 'completed', 'failed')"
+              }
+            },
+            "required" => ["task_id", "stage_name", "stage_type", "tool_name", "ai_reasoning", "status"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "edit_task_stage",
+          "description" => "Edit an existing task stage",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "stage_id" => %{
+                "type" => "string",
+                "description" => "The ID of the stage to edit"
+              },
+              "stage_name" => %{
+                "type" => "string",
+                "description" => "Updated stage name"
+              },
+              "stage_type" => %{
+                "type" => "string",
+                "description" => "Updated stage type"
+              },
+              "tool_name" => %{
+                "type" => "string",
+                "description" => "Updated tool name"
+              },
+              "tool_params" => %{
+                "type" => "object",
+                "description" => "Updated tool parameters"
+              },
+              "tool_result" => %{
+                "type" => "object",
+                "description" => "Result from tool execution"
+              },
+              "ai_reasoning" => %{
+                "type" => "string",
+                "description" => "Updated AI reasoning"
+              },
+              "status" => %{
+                "type" => "string",
+                "description" => "Updated status"
+              },
+              "started_at" => %{
+                "type" => "string",
+                "format" => "date-time",
+                "description" => "When the stage started"
+              },
+              "completed_at" => %{
+                "type" => "string",
+                "format" => "date-time",
+                "description" => "When the stage completed"
+              },
+              "error_message" => %{
+                "type" => "string",
+                "description" => "Error message if stage failed"
+              }
+            },
+            "required" => ["stage_id"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_assistant_message",
+          "description" => "Create an assistant message in a chat session",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "session_id" => %{
+                "type" => "string",
+                "description" => "The ID of the chat session"
+              },
+              "message" => %{
+                "type" => "string",
+                "description" => "The message content from the assistant"
+              }
+            },
+            "required" => ["session_id", "message"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_system_message",
+          "description" => "Create a system message in a chat session",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "session_id" => %{
+                "type" => "string",
+                "description" => "The ID of the chat session"
+              },
+              "message" => %{
+                "type" => "string",
+                "description" => "The system message content"
+              }
+            },
+            "required" => ["session_id", "message"]
+          }
+        }
+      }
+    ]
   end
 
-  # Helper functions
+  # Private functions for tool implementations
   
-  defp get_user(user_id) do
-    case Accounts.get_user!(user_id) do
-      nil -> {:error, "User not found"}
-      user -> {:ok, user}
-    end
-  rescue
-    _ -> {:error, "User not found"}
-  end
+   defp create_assistant_message(args, user_id) do
+    session_id = Map.get(args, "session_id")
+    message = Map.get(args, "message")
 
-  defp validate_email_params(params) do
-    required_fields = ["to", "subject", "body"]
-    missing_fields = Enum.filter(required_fields, fn field -> is_nil(params[field]) or params[field] == "" end)
-    
-    if Enum.empty?(missing_fields) do
-      {:ok, params}
-    else
-      {:error, "Missing required email fields: #{Enum.join(missing_fields, ", ")}"}
+    case ChatMessages.create_assistant_message(session_id, user_id, message) do
+      {:ok, chat_message} ->
+        Logger.info("[ToolExecutor] Successfully created assistant message: #{chat_message.id}")
+        {:ok, chat_message}
+      {:error, changeset} ->
+        Logger.error("[ToolExecutor] Failed to create assistant message: #{inspect(changeset.errors)}")
+        {:error, "Failed to create assistant message: #{format_changeset_errors(changeset)}"}
     end
   end
 
-  defp validate_meeting_params(params) do
-    required_fields = ["title", "attendees", "start_time", "end_time"]
-    missing_fields = Enum.filter(required_fields, fn field -> is_nil(params[field]) or params[field] == "" end)
-    
-    if Enum.empty?(missing_fields) do
-      {:ok, params}
-    else
-      {:error, "Missing required meeting fields: #{Enum.join(missing_fields, ", ")}"}
+  defp create_system_message(args, user_id) do
+    session_id = Map.get(args, "session_id")
+    message = Map.get(args, "message")
+
+    case ChatMessages.create_system_message(session_id, user_id, message) do
+      {:ok, chat_message} ->
+        Logger.info("[ToolExecutor] Successfully created system message: #{chat_message.id}")
+        {:ok, chat_message}
+      {:error, changeset} ->
+        Logger.error("[ToolExecutor] Failed to create system message: #{inspect(changeset.errors)}")
+        {:error, "Failed to create system message: #{format_changeset_errors(changeset)}"}
     end
   end
 
-  defp validate_crm_params(params) do
-    required_fields = ["contact_email", "action", "data"]
-    missing_fields = Enum.filter(required_fields, fn field -> is_nil(params[field]) or params[field] == "" end)
-    
-    if Enum.empty?(missing_fields) do
-      {:ok, params}
-    else
-      {:error, "Missing required CRM fields: #{Enum.join(missing_fields, ", ")}"}
+  defp create_task(args, user_id) do
+    task_attrs = args
+    |> Map.put("user_id", user_id)
+    |> Map.put("is_done", Map.get(args, "is_done", false))
+
+    case Tasks.create_task(task_attrs) do
+      {:ok, task} ->
+        Logger.info("[ToolExecutor] Successfully created task: #{task.id}")
+        {:ok, task}
+      {:error, changeset} ->
+        Logger.error("[ToolExecutor] Failed to create task: #{inspect(changeset.errors)}")
+        {:error, "Failed to create task: #{format_changeset_errors(changeset)}"}
     end
   end
 
-  # Create assistant message in chat
-  defp execute_create_assistant_message(params, user_id) do
-    with {:ok, _user} <- get_user(user_id),
-         {:ok, _} <- validate_assistant_message_params(params) do
-      
-      session_id = params["session_id"] || params["thread_id"]
-      content = params["content"] || params["message"]
-      
-      if session_id do
-        Logger.info("[ToolExecutor] Creating assistant message for session #{session_id}: #{String.slice(content, 0, 100)}...")
-        case Finpilot.ChatMessages.create_assistant_message(session_id, user_id, content) do
-          {:ok, message} ->
-            Logger.info("[ToolExecutor] Assistant message created successfully with ID #{message.id}")
-            {:ok, %{action: "assistant_message_created", content: content, message_id: message.id, session_id: session_id}}
-          {:error, changeset} ->
-            Logger.error("[ToolExecutor] Failed to create assistant message: #{inspect(changeset.errors)}")
-            {:error, "Failed to create assistant message: #{inspect(changeset.errors)}"}
+  defp edit_task(args, user_id) do
+    task_id = Map.get(args, "task_id")
+
+    case Tasks.get_task(task_id) do
+      {:ok, task} ->
+        # Verify user owns the task
+        if task.user_id == user_id do
+          update_attrs = Map.delete(args, "task_id")
+
+          case Tasks.update_task(task, update_attrs) do
+            {:ok, updated_task} ->
+              Logger.info("[ToolExecutor] Successfully updated task: #{task_id}")
+              {:ok, updated_task}
+            {:error, changeset} ->
+              Logger.error("[ToolExecutor] Failed to update task: #{inspect(changeset.errors)}")
+              {:error, "Failed to update task: #{format_changeset_errors(changeset)}"}
+          end
+        else
+          {:error, "Task not found or access denied"}
         end
-      else
-        Logger.error("[ToolExecutor] No session_id provided for assistant message: #{content}")
-        {:error, "session_id is required for assistant messages"}
+      {:error, :not_found} ->
+        {:error, "Task not found"}
+    end
+  end
+
+  defp create_task_stage(args, user_id) do
+    task_id = Map.get(args, "task_id")
+
+    # Verify user owns the task
+    case Tasks.get_task(task_id) do
+      {:ok, task} when task.user_id == user_id ->
+        stage_attrs = args
+        |> Map.put("started_at", Map.get(args, "started_at", DateTime.utc_now()))
+        |> Map.put("completed_at", Map.get(args, "completed_at", DateTime.utc_now()))
+        |> Map.put("error_message", Map.get(args, "error_message", ""))
+
+        case Tasks.create_task_stage(stage_attrs) do
+          {:ok, stage} ->
+            Logger.info("[ToolExecutor] Successfully created task stage: #{stage.id}")
+            {:ok, stage}
+          {:error, changeset} ->
+            Logger.error("[ToolExecutor] Failed to create task stage: #{inspect(changeset.errors)}")
+            {:error, "Failed to create task stage: #{format_changeset_errors(changeset)}"}
+        end
+      {:ok, _task} ->
+        {:error, "Task not found or access denied"}
+      {:error, :not_found} ->
+        {:error, "Task not found"}
+    end
+  end
+
+  defp edit_task_stage(args, user_id) do
+    stage_id = Map.get(args, "stage_id")
+
+    try do
+      stage = Tasks.get_task_stage!(stage_id)
+
+      # Get the associated task to verify user ownership
+      case Tasks.get_task(stage.task_id) do
+        {:ok, task} when task.user_id == user_id ->
+          update_attrs = Map.delete(args, "stage_id")
+
+          case Tasks.update_task_stage(stage, update_attrs) do
+            {:ok, updated_stage} ->
+              Logger.info("[ToolExecutor] Successfully updated task stage: #{stage_id}")
+              {:ok, updated_stage}
+            {:error, changeset} ->
+              Logger.error("[ToolExecutor] Failed to update task stage: #{inspect(changeset.errors)}")
+              {:error, "Failed to update task stage: #{format_changeset_errors(changeset)}"}
+          end
+        {:ok, _task} ->
+          {:error, "Task stage not found or access denied"}
+        {:error, :not_found} ->
+          {:error, "Associated task not found"}
       end
-    else
-      error -> error
+    rescue
+      Ecto.NoResultsError ->
+        {:error, "Task stage not found"}
     end
   end
 
-  # Create system notification
-  defp execute_create_system_notification(params, user_id) do
-    with {:ok, _user} <- get_user(user_id),
-         {:ok, _} <- validate_system_notification_params(params) do
-      
-      # TODO: Implement actual system notification creation
-      # Notifications.create_notification(user_id, %{
-      #   title: params["title"],
-      #   message: params["message"],
-      #   type: params["type"] || "info"
-      # })
-      
-      Logger.info("System notification would be created: #{params["title"]} - #{params["message"]}")
-      {:ok, %{action: "system_notification_created", title: params["title"]}}
-    else
-      error -> error
-    end
+  defp format_changeset_errors(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
+    |> Enum.join(", ")
   end
-
-  defp validate_assistant_message_params(params) do
-    required_fields = ["session_id", "content"]
-    missing_fields = Enum.filter(required_fields, fn field -> is_nil(params[field]) or params[field] == "" end)
-    
-    if Enum.empty?(missing_fields) do
-      {:ok, params}
-    else
-      {:error, "Missing required assistant message fields: #{Enum.join(missing_fields, ", ")}"}
-    end
-  end
-
-  defp validate_system_notification_params(params) do
-    required_fields = ["title", "message"]
-    missing_fields = Enum.filter(required_fields, fn field -> is_nil(params[field]) or params[field] == "" end)
-    
-    if Enum.empty?(missing_fields) do
-      {:ok, params}
-    else
-      {:error, "Missing required system notification fields: #{Enum.join(missing_fields, ", ")}"}
-    end
-  end
-
-  # Removed hardcoded determine_next_stage function - now using natural language approach
-
-
 end

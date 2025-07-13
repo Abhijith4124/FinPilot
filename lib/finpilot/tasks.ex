@@ -1,12 +1,12 @@
-defmodule Finpilot.TaskRunner do
+defmodule Finpilot.Tasks do
   @moduledoc """
-  The TaskRunner context.
+  The Tasks context.
   """
 
   import Ecto.Query, warn: false
   alias Finpilot.Repo
 
-  alias Finpilot.TaskRunner.Task
+  alias Finpilot.Tasks.Task
 
   @doc """
   Returns the list of tasks.
@@ -123,7 +123,7 @@ defmodule Finpilot.TaskRunner do
     Task.changeset(task, attrs)
   end
 
-  alias Finpilot.TaskRunner.TaskStage
+  alias Finpilot.Tasks.TaskStage
 
   @doc """
   Returns the list of task_stages.
@@ -219,7 +219,7 @@ defmodule Finpilot.TaskRunner do
     TaskStage.changeset(task_stage, attrs)
   end
 
-  alias Finpilot.TaskRunner.Instruction
+  alias Finpilot.Tasks.Instruction
 
   @doc """
   Returns the list of instructions.

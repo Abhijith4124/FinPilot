@@ -10,7 +10,7 @@ defmodule Finpilot.Services.EmailEmbedder do
 
   alias Finpilot.Workers.EmailEmbeddingWorker
   alias Finpilot.Gmail
-  alias Finpilot.Gmail.{Email, EmailEmbeddings}
+  alias Finpilot.Gmail.Email
   alias Finpilot.Services.Gmail, as: GmailService
   alias Finpilot.Repo
   import Ecto.Query

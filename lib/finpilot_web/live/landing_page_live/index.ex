@@ -1,16 +1,16 @@
 defmodule FinpilotWeb.LandingPageLive.Index do
   use FinpilotWeb, :live_view
+  require Logger
   alias Finpilot.Accounts
   alias Finpilot.ChatSessions
   alias Finpilot.ChatMessages
-  alias Finpilot.TaskRunner.Processor
   alias FinpilotWeb.Structs.CurrentSessionUser
 
   @impl true
   def mount(_params, session, socket) do
     current_user = validate_session_user(session["current_user"])
-    {:ok, assign(socket, 
-      current_user: current_user, 
+    {:ok, assign(socket,
+      current_user: current_user,
       show_settings: false,
       chat_session: nil,
       messages: [],
@@ -27,14 +27,14 @@ defmodule FinpilotWeb.LandingPageLive.Index do
       {:ok, chat_session} ->
         # Load messages for this session
         messages = ChatMessages.list_messages_by_session(session_id)
-        
+
         # Subscribe to PubSub if not already subscribed
         unless socket.assigns.subscribed_session_id == session_id do
           Phoenix.PubSub.subscribe(Finpilot.PubSub, "chat_session:#{session_id}")
         end
-        
-        socket = assign(socket, 
-          chat_session: chat_session, 
+
+        socket = assign(socket,
+          chat_session: chat_session,
           messages: messages,
           subscribed_session_id: session_id
         )
@@ -75,30 +75,7 @@ defmodule FinpilotWeb.LandingPageLive.Index do
   end
   defp validate_session_user(_), do: nil
 
-  @impl true
-  def handle_params(%{"session_id" => session_id}, _uri, socket) do
-    if socket.assigns.current_user do
-      try do
-        case ChatSessions.get_chat_session!(session_id) do
-          %{user_id: user_id} = chat_session when user_id == socket.assigns.current_user.id ->
-            messages = ChatMessages.list_messages_by_session(session_id)
-            {:noreply, assign(socket, chat_session: chat_session, messages: messages)}
-          _ ->
-            {:noreply, push_navigate(socket, to: "/")}
-        end
-      rescue
-        Ecto.NoResultsError ->
-          {:noreply, push_navigate(socket, to: "/")}
-      end
-    else
-      {:noreply, socket}
-    end
-  end
 
-  @impl true
-  def handle_params(_params, _uri, socket) do
-    {:noreply, socket}
-  end
 
   @impl true
   def handle_event("signin_google", _params, socket) do
@@ -118,26 +95,35 @@ defmodule FinpilotWeb.LandingPageLive.Index do
 
   @impl true
   def handle_event("send_message", %{"message" => message}, socket) do
+    # Generate a unique event ID for tracking
+    event_id = :crypto.strong_rand_bytes(8) |> Base.encode16()
+    Logger.info("[LiveView][#{event_id}] send_message event triggered")
+    Logger.info("[LiveView][#{event_id}] Process PID: #{inspect(self())}, Node: #{node()}")
+
     if socket.assigns.current_user && String.trim(message) != "" do
       user_id = socket.assigns.current_user.id
       trimmed_message = String.trim(message)
-      
+
+      Logger.info("[LiveView][#{event_id}] Processing message for user #{user_id}, message length: #{String.length(trimmed_message)}")
+
       # Create chat session if it doesn't exist
       {chat_session, socket} = ensure_chat_session(socket, user_id)
-      
+
       # Add user message to database
       case ChatMessages.create_user_message(chat_session.id, user_id, trimmed_message) do
-        {:ok, user_message} ->
+        {:ok, _user_message} ->
           # Set loading state - the user message will be added via PubSub broadcast
           socket = assign(socket, new_message: "", loading: true)
-          
+
           # Process message with AI in background
+          Logger.info("[LiveView][#{event_id}] Starting Task for AI processing")
           Task.start(fn ->
-            Finpilot.TaskRunner.Processor.process_chat(trimmed_message, user_id, chat_session.id)
+            Logger.info("[LiveView][#{event_id}] Task started, calling Processor.process_chat")
+            Finpilot.Tasks.Processor.process_chat(trimmed_message, user_id, chat_session.id)
           end)
-          
+
           {:noreply, socket}
-        
+
         {:error, _changeset} ->
           {:noreply, put_flash(socket, :error, "Failed to send message")}
       end
@@ -206,10 +192,10 @@ defmodule FinpilotWeb.LandingPageLive.Index do
   def handle_info({:new_message, message}, socket) do
     # Add the new message to the current messages list
     updated_messages = socket.assigns.messages ++ [message]
-    
+
     # If this is an assistant message, turn off loading state
     loading = if message.role == "assistant", do: false, else: socket.assigns.loading
-    
+
     {:noreply, assign(socket, messages: updated_messages, loading: loading)}
   end
 
@@ -222,10 +208,10 @@ defmodule FinpilotWeb.LandingPageLive.Index do
           {:ok, chat_session} ->
             # Load existing messages for this session
             messages = ChatMessages.list_messages_by_session(chat_session.id)
-            
+
             # Subscribe to PubSub for real-time updates
             Phoenix.PubSub.subscribe(Finpilot.PubSub, "chat_session:#{chat_session.id}")
-            
+
             # Update URL without navigation to avoid remounting
             socket = socket
             |> assign(chat_session: chat_session, messages: messages, subscribed_session_id: chat_session.id)

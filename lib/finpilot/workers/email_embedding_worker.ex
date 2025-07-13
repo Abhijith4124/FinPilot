@@ -10,27 +10,27 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
 
   use Oban.Worker, queue: :email_processing
 
-  alias Finpilot.Gmail.{Email, EmailEmbeddings}
   alias Finpilot.Services.{Gmail, OpenAI}
   alias Finpilot.Gmail
+  alias Finpilot.Gmail.Email
   alias Finpilot.Repo
   import Ecto.Query
   require Logger
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"user_id" => user_id, "batch_size" => batch_size} = args}) do
+  def perform(%Oban.Job{args: %{"user_id" => user_id, "batch_size" => batch_size} = _args}) do
     user_id = ensure_binary_id(user_id)
     batch_size = batch_size || 10
-    
+
     Logger.info("Starting email embedding processing for user #{user_id}, batch size: #{batch_size}")
-    
+
     # Update sync status to processing
     update_sync_status(user_id, :processing, "Starting email embedding processing")
-    
+
     try do
       # Get unprocessed emails for the user
       emails = get_unprocessed_emails(user_id, batch_size)
-      
+
       if Enum.empty?(emails) do
         Logger.info("No unprocessed emails found for user #{user_id}")
         update_sync_status(user_id, :completed, "No emails to process")
@@ -59,7 +59,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
   defp get_unprocessed_emails(user_id, batch_size) do
     # TODO: Remove the 100 email limit after testing
     total_limit = min(batch_size, 100)
-    
+
     Email
     |> where([e], e.user_id == ^user_id)
     |> where([e], is_nil(e.embedding))
@@ -71,20 +71,20 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
 
   defp process_emails_batch(emails, user_id) do
     total_emails = length(emails)
-    
+
     # Prepare texts for batch embedding
     email_texts = Enum.map(emails, &prepare_email_text/1)
-    
+
     case OpenAI.generate_embeddings(email_texts) do
       {:ok, embeddings} ->
         Logger.info("Generated #{length(embeddings)} embeddings for user #{user_id}")
-        
+
         # Update emails with embeddings
         results = update_emails_with_embeddings(emails, embeddings)
-        
+
         # Count successes and failures
         {successes, failures} = count_results(results)
-        
+
         if failures > 0 do
           error_message = "Processed #{successes}/#{total_emails} emails successfully, #{failures} failed"
           Logger.warning(error_message)
@@ -94,14 +94,14 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
           Logger.info(success_message)
           update_sync_status(user_id, :completed, success_message)
         end
-        
+
         # Schedule next batch if there might be more emails
         if total_emails >= 10 do
           schedule_next_batch(user_id)
         end
-        
+
         :ok
-        
+
       {:error, reason} ->
         error_message = "Failed to generate embeddings: #{reason}"
         Logger.error(error_message)
@@ -115,7 +115,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
     subject = email.subject || ""
     content = email.content || ""
     sender = email.sender || ""
-    
+
     "Subject: #{subject}\nFrom: #{sender}\nContent: #{content}"
     |> String.trim()
     |> String.slice(0, 8000) # Limit text length for API
@@ -137,7 +137,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
         processed_at: DateTime.utc_now()
       })
       |> Repo.update()
-      
+
       {:ok, email.id}
     rescue
       error ->
@@ -164,7 +164,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
             last_sync_at: DateTime.utc_now(),
             last_error_message: if(status == :error, do: message, else: nil)
           })
-          
+
         sync_status ->
           # Update existing sync status
           Gmail.update_sync_status(sync_status, %{

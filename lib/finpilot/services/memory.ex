@@ -5,14 +5,13 @@ defmodule Finpilot.Services.Memory do
   """
 
   alias Finpilot.Repo
-  alias Finpilot.TaskRunner.Task
+  alias Finpilot.Tasks.Task
   alias Finpilot.ChatMessages.ChatMessage
   alias Finpilot.Services.OpenAI
   import Ecto.Query
   import Pgvector.Ecto.Query
   require Logger
 
-  @embedding_model_dimensions 1536  # text-embedding-3-small dimensions
   @default_similarity_threshold 0.7
   @default_limit 10
 

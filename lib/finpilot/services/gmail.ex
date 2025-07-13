@@ -5,8 +5,6 @@ defmodule Finpilot.Services.Gmail do
 
   alias Finpilot.Accounts.User
   alias Finpilot.Gmail
-  alias Finpilot.Gmail.{Email, SyncStatus}
-  alias Finpilot.Repo
   alias GoogleApi.Gmail.V1.Api.Users
   alias GoogleApi.Gmail.V1.Connection
   alias GoogleApi.Gmail.V1.Model.{Message, Draft}
@@ -15,7 +13,7 @@ defmodule Finpilot.Services.Gmail do
 
   @doc """
   Sends an email using Gmail API.
-  
+
   ## Parameters
   - user: User struct with valid Gmail tokens
   - to: Recipient email address
@@ -28,15 +26,15 @@ defmodule Finpilot.Services.Gmail do
       cc = Keyword.get(opts, :cc, [])
       bcc = Keyword.get(opts, :bcc, [])
       from = Keyword.get(opts, :from, user.email)
-      
+
       # Build email message
       email_content = build_email_message(from, to, cc, bcc, subject, body)
-      
+
       # Create message object
       message = %Message{
         raw: Base.url_encode64(email_content, padding: false)
       }
-      
+
       case Users.gmail_users_messages_send(conn, "me", body: message) do
         {:ok, response} ->
           {:ok, response}
@@ -52,7 +50,7 @@ defmodule Finpilot.Services.Gmail do
   def get_email(%User{} = user, message_id, opts \\ []) do
     with {:ok, conn} <- get_connection(user) do
       format = Keyword.get(opts, :format, "full")
-      
+
       case Users.gmail_users_messages_get(conn, "me", message_id, format: format) do
         {:ok, message} ->
           {:ok, message}
@@ -64,7 +62,7 @@ defmodule Finpilot.Services.Gmail do
 
   @doc """
   Gets emails from a specific date range.
-  
+
   ## Parameters
   - user: User struct
   - start_date: Start date (DateTime or date string)
@@ -75,24 +73,24 @@ defmodule Finpilot.Services.Gmail do
     with {:ok, conn} <- get_connection(user) do
       max_results = Keyword.get(opts, :max_results, 100)
       label_ids = Keyword.get(opts, :label_ids, [])
-      
+
       # Format dates for Gmail query
       start_query = format_date_for_query(start_date)
       end_query = format_date_for_query(end_date)
-      
+
       query = "after:#{start_query} before:#{end_query}"
-      
+
       list_opts = [
         q: query,
         maxResults: max_results
       ]
-      
+
       list_opts = if length(label_ids) > 0 do
         Keyword.put(list_opts, :labelIds, label_ids)
       else
         list_opts
       end
-      
+
       case Users.gmail_users_messages_list(conn, "me", list_opts) do
         {:ok, response} ->
           {:ok, response}
@@ -110,18 +108,18 @@ defmodule Finpilot.Services.Gmail do
     with {:ok, conn} <- get_connection(user) do
       max_results = Keyword.get(opts, :max_results, 100)
       label_ids = Keyword.get(opts, :label_ids, [])
-      
+
       history_opts = [
         startHistoryId: history_id,
         maxResults: max_results
       ]
-      
+
       history_opts = if length(label_ids) > 0 do
         Keyword.put(history_opts, :labelId, label_ids)
       else
         history_opts
       end
-      
+
       case Users.gmail_users_history_list(conn, "me", history_opts) do
         {:ok, response} ->
           {:ok, response}
@@ -140,29 +138,29 @@ defmodule Finpilot.Services.Gmail do
       max_results = Keyword.get(opts, :max_results, 100)
       label_ids = Keyword.get(opts, :label_ids, [])
       page_token = Keyword.get(opts, :page_token)
-      
+
       list_opts = [
         maxResults: max_results
       ]
-      
+
       list_opts = if query != "" do
         Keyword.put(list_opts, :q, query)
       else
         list_opts
       end
-      
+
       list_opts = if length(label_ids) > 0 do
         Keyword.put(list_opts, :labelIds, label_ids)
       else
         list_opts
       end
-      
+
       list_opts = if page_token do
         Keyword.put(list_opts, :pageToken, page_token)
       else
         list_opts
       end
-      
+
       case Users.gmail_users_messages_list(conn, "me", list_opts) do
         {:ok, response} ->
           {:ok, response}
@@ -208,17 +206,17 @@ defmodule Finpilot.Services.Gmail do
       cc = Keyword.get(opts, :cc, [])
       bcc = Keyword.get(opts, :bcc, [])
       from = Keyword.get(opts, :from, user.email)
-      
+
       # Build email message
       email_content = build_email_message(from, to, cc, bcc, subject, body)
-      
+
       # Create draft object
       draft = %Draft{
         message: %Message{
           raw: Base.url_encode64(email_content, padding: false)
         }
       }
-      
+
       case Users.gmail_users_drafts_create(conn, "me", body: draft) do
         {:ok, response} ->
           {:ok, response}
@@ -234,7 +232,7 @@ defmodule Finpilot.Services.Gmail do
   def search_emails(%User{} = user, query, opts \\ []) do
     with {:ok, conn} <- get_connection(user) do
       max_results = Keyword.get(opts, :max_results, 100)
-      
+
       case Users.gmail_users_messages_list(conn, "me", q: query, maxResults: max_results) do
         {:ok, response} ->
           {:ok, response}
@@ -268,7 +266,7 @@ defmodule Finpilot.Services.Gmail do
         addLabelIds: add_label_ids,
         removeLabelIds: remove_label_ids
       }
-      
+
       case Users.gmail_users_messages_modify(conn, "me", message_id, body: modify_request) do
         {:ok, response} ->
           {:ok, response}
@@ -280,18 +278,18 @@ defmodule Finpilot.Services.Gmail do
 
   @doc """
   Syncs user emails from Gmail and saves them to the database.
-  
+
   ## Parameters
   - user_id: The user ID to sync emails for
   - opts: Optional parameters like max_results, days_back
-  
+
   ## Returns
   - {:ok, sync_result} - Success with sync statistics
   - {:error, reason} - Error during sync
   """
   def sync_user_emails(user_id, opts \\ []) do
     Logger.info("Starting email sync for user #{user_id}")
-    
+
     try do
       case Finpilot.Accounts.get_user!(user_id) do
         %User{} = user ->
@@ -308,29 +306,29 @@ defmodule Finpilot.Services.Gmail do
   defp do_sync_user_emails(%User{} = user, opts) do
     max_results = Keyword.get(opts, :max_results, 100)
     days_back = Keyword.get(opts, :days_back, 30)
-    
+
     # Get or create sync status
     sync_status = Gmail.get_sync_status_by_user_id(user.id) || create_initial_sync_status(user.id)
-    
+
     # Update sync status to "syncing"
     {:ok, _} = Gmail.update_sync_status(sync_status, %{
       sync_status: "syncing",
       last_error_message: nil
     })
-    
+
     try do
       # Calculate date range
       end_date = DateTime.utc_now()
       start_date = DateTime.add(end_date, -days_back * 24 * 60 * 60, :second)
-      
+
       # Get messages from Gmail
       case get_emails_by_date_range(user, start_date, end_date, max_results: max_results) do
         {:ok, %{messages: messages}} when is_list(messages) ->
           Logger.info("Found #{length(messages)} messages to sync for user #{user.id}")
-          
+
           # Process messages in batches
           {success_count, error_count} = process_messages_batch(user, messages)
-          
+
           # Update sync status with results
           {:ok, updated_sync_status} = Gmail.update_sync_status(sync_status, %{
             sync_status: "completed",
@@ -338,46 +336,46 @@ defmodule Finpilot.Services.Gmail do
             total_emails_processed: (sync_status.total_emails_processed || 0) + success_count,
             last_error_message: if(error_count > 0, do: "#{error_count} emails failed to sync", else: nil)
           })
-          
+
           sync_result = %{
             total_found: length(messages),
             successfully_synced: success_count,
             failed: error_count,
             sync_status: updated_sync_status
           }
-          
+
           Logger.info("Email sync completed for user #{user.id}: #{inspect(sync_result)}")
           {:ok, sync_result}
-          
+
         {:ok, %{messages: nil}} ->
           Logger.info("No new messages found for user #{user.id}")
-          
+
           {:ok, _} = Gmail.update_sync_status(sync_status, %{
             sync_status: "completed",
             last_sync_at: DateTime.utc_now()
           })
-          
+
           {:ok, %{total_found: 0, successfully_synced: 0, failed: 0}}
-          
+
         {:error, reason} ->
           Logger.error("Failed to get emails for user #{user.id}: #{inspect(reason)}")
-          
+
           {:ok, _} = Gmail.update_sync_status(sync_status, %{
             sync_status: "error",
             last_error_message: "Failed to fetch emails: #{inspect(reason)}"
           })
-          
+
           {:error, reason}
       end
     rescue
       error ->
         Logger.error("Exception during email sync for user #{user.id}: #{inspect(error)}")
-        
+
         {:ok, _} = Gmail.update_sync_status(sync_status, %{
           sync_status: "error",
           last_error_message: "Sync failed with exception: #{inspect(error)}"
         })
-        
+
         {:error, "Sync failed with exception: #{inspect(error)}"}
     end
   end
@@ -395,11 +393,11 @@ defmodule Finpilot.Services.Gmail do
 
   defp process_messages_batch(user, messages) do
     Logger.info("Processing #{length(messages)} messages for user #{user.id}")
-    
+
     results = Enum.map(messages, fn message ->
       process_single_message(user, message.id)
     end)
-    
+
     # Count successes and failures
     Enum.reduce(results, {0, 0}, fn
       {:ok, _}, {successes, failures} -> {successes + 1, failures}
@@ -423,13 +421,13 @@ defmodule Finpilot.Services.Gmail do
                 Logger.error("Failed to create email for message #{message_id}: #{inspect(changeset.errors)}")
                 {:error, "Failed to create email"}
             end
-          
+
           existing_email ->
             # Email already exists, optionally update it
             Logger.debug("Email already exists for message #{message_id}")
             {:ok, existing_email}
         end
-        
+
       {:error, reason} ->
         Logger.error("Failed to fetch message #{message_id}: #{inspect(reason)}")
         {:error, reason}
@@ -438,7 +436,7 @@ defmodule Finpilot.Services.Gmail do
 
   defp extract_email_attributes(gmail_message, user_id) do
     headers = get_headers_map(gmail_message.payload.headers || [])
-    
+
     %{
       gmail_message_id: gmail_message.id,
       subject: Map.get(headers, "subject", ""),
@@ -462,7 +460,7 @@ defmodule Finpilot.Services.Gmail do
     to_recipients = parse_email_addresses(Map.get(headers, "to", ""))
     cc_recipients = parse_email_addresses(Map.get(headers, "cc", ""))
     bcc_recipients = parse_email_addresses(Map.get(headers, "bcc", ""))
-    
+
     %{
       to: to_recipients,
       cc: cc_recipients,
@@ -483,7 +481,7 @@ defmodule Finpilot.Services.Gmail do
     cond do
       payload.body && payload.body.data ->
         Base.decode64!(payload.body.data, padding: false)
-        
+
       payload.parts ->
         payload.parts
         |> Enum.find(fn part -> part.mimeType in ["text/plain", "text/html"] end)
@@ -493,7 +491,7 @@ defmodule Finpilot.Services.Gmail do
           _ ->
             ""
         end
-        
+
       true ->
         ""
     end
@@ -520,7 +518,7 @@ defmodule Finpilot.Services.Gmail do
   defp parse_rfc2822_date(date_string) do
     # Remove day of week if present (e.g., "Mon, 01 Jan 2024 12:00:00 +0000")
     cleaned = String.replace(date_string, ~r/^\w+,\s*/, "")
-    
+
     # Try to parse with different timezone formats
     case Regex.run(~r/(\d{1,2})\s+(\w+)\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([+-]\d{4}|\w+)/, cleaned) do
       [_, day, month, year, hour, minute, second, tz] ->
@@ -529,7 +527,7 @@ defmodule Finpilot.Services.Gmail do
           date = Date.new!(String.to_integer(year), month_num, String.to_integer(day))
           time = Time.new!(String.to_integer(hour), String.to_integer(minute), String.to_integer(second))
           naive_dt = NaiveDateTime.new!(date, time)
-          
+
           # Convert to UTC (simplified - assumes common timezones)
           case tz do
             "+0000" -> {:ok, DateTime.from_naive!(naive_dt, "Etc/UTC")}
@@ -596,7 +594,7 @@ defmodule Finpilot.Services.Gmail do
       params: %{"refresh_token" => refresh_token}
     ])
     |> OAuth2.Client.put_serializer("application/json", Jason)
-    
+
     case OAuth2.Client.get_token(client) do
       {:ok, %OAuth2.Client{token: %OAuth2.AccessToken{access_token: new_access_token, expires_at: expires_at}}} ->
         # Calculate new expiry time
@@ -605,7 +603,7 @@ defmodule Finpilot.Services.Gmail do
         else
           DateTime.add(DateTime.utc_now(), 3600, :second) # Default 1 hour
         end
-        
+
         # Update user with new token
         case Finpilot.Accounts.update_google_tokens(user, new_access_token, refresh_token, new_expiry) do
           {:ok, _updated_user} ->
@@ -627,20 +625,20 @@ defmodule Finpilot.Services.Gmail do
     to_header = if is_list(to), do: Enum.join(to, ", "), else: to
     cc_header = if length(cc) > 0, do: "\r\nCc: #{Enum.join(cc, ", ")}", else: ""
     bcc_header = if length(bcc) > 0, do: "\r\nBcc: #{Enum.join(bcc, ", ")}", else: ""
-    
+
     # Determine content type based on body content
     content_type = if String.contains?(body, "<") and String.contains?(body, ">") do
       "text/html; charset=utf-8"
     else
       "text/plain; charset=utf-8"
     end
-    
+
     """
     From: #{from}
     To: #{to_header}#{cc_header}#{bcc_header}
     Subject: #{subject}
     Content-Type: #{content_type}
-    
+
     #{body}
     """
   end

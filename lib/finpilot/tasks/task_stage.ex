@@ -1,4 +1,4 @@
-defmodule Finpilot.TaskRunner.TaskStage do
+defmodule Finpilot.Tasks.TaskStage do
   use Ecto.Schema
   import Ecto.Changeset
 
@@ -15,7 +15,7 @@ defmodule Finpilot.TaskRunner.TaskStage do
     field :ai_reasoning, :string
     field :completed_at, :utc_datetime
     field :error_message, :string
-    belongs_to :task, Finpilot.TaskRunner.Task
+    belongs_to :task, Finpilot.Tasks.Task
 
     timestamps(type: :utc_datetime)
   end

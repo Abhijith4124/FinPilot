@@ -144,7 +144,7 @@ defmodule Finpilot.Services.OpenAI do
   # Private functions
 
   defp get_api_key do
-    case Application.get_env(:finpilot, HubSpot)[:api_key] do
+    case Application.get_env(:finpilot, OpenAi)[:api_key] do
       nil -> raise "OPENAI_API_KEY environment variable not set"
       key -> key
     end
