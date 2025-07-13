@@ -1,0 +1,1 @@
+Postgrex.Types.define(Finpilot.PostgrexTypes, Pgvector.extensions() ++ Ecto.Adapters.Postgres.extensions(), [])

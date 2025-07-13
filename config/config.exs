@@ -11,6 +11,9 @@ config :finpilot,
   ecto_repos: [Finpilot.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# Configure Postgrex types for pgvector
+config :finpilot, Finpilot.Repo, types: Finpilot.PostgrexTypes
+
 # Configures the endpoint
 config :finpilot, FinpilotWeb.Endpoint,
   url: [host: "localhost"],

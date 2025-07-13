@@ -61,7 +61,9 @@ defmodule Finpilot.MixProject do
       {:oauth2, "~> 2.0"},
       {:dotenvy, "~> 0.8.0"},
       {:google_api_gmail, "~> 0.17"},
-      {:google_api_calendar, "~> 0.26"}
+      {:google_api_calendar, "~> 0.26"},
+      {:pgvector, "~> 0.3.0"},
+      {:oban, "~> 2.17"}
     ]
   end
 
