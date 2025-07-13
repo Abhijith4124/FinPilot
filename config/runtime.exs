@@ -39,6 +39,12 @@ config :finpilot, HubSpot,
     client_secret: env!("HUBSPOT_CLIENT_SECRET"),
     redirect_uri: env!("HUBSPOT_REDIRECT_URI")
 
+config :finpilot, OpenRouter,
+    api_key: env!("OPENROUTER_API_KEY")
+
+config :finpilot, OpenAi,
+    api_key: env!("OPENAI_API_KEY")
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

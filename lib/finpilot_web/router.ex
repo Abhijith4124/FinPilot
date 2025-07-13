@@ -18,6 +18,7 @@ defmodule FinpilotWeb.Router do
     pipe_through :browser
 
     live "/", LandingPageLive.Index, :index
+    live "/chat/:session_id", LandingPageLive.Index, :chat
 
     # OAuth routes
     get "/auth/google/callback", AuthController, :google_callback

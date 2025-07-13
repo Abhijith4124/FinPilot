@@ -7,12 +7,12 @@ defmodule Finpilot.Repo.Migrations.CreateEmails do
       add :gmail_message_id, :string
       add :subject, :string
       add :sender, :string
-      add :recipients, :text
-      add :content, :text
+      add :recipients, :string
+      add :content, :string
       add :received_at, :utc_datetime
       add :thread_id, :string
       add :labels, :text
-      add :embedding, :vector, size: 1536
+      add :embedding, :vector, size: 3072
       add :processed_at, :utc_datetime
       add :user_id, references(:users, on_delete: :nothing, type: :binary_id)
 

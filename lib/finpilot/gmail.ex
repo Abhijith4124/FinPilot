@@ -38,6 +38,24 @@ defmodule Finpilot.Gmail do
   def get_sync_status!(id), do: Repo.get!(SyncStatus, id)
 
   @doc """
+  Gets a sync_status by user_id.
+
+  ## Examples
+
+      iex> get_sync_status_by_user_id("user_123")
+      %SyncStatus{}
+
+      iex> get_sync_status_by_user_id("nonexistent")
+      nil
+
+  """
+  def get_sync_status_by_user_id(user_id) do
+    SyncStatus
+    |> where([s], s.user_id == ^user_id)
+    |> Repo.one()
+  end
+
+  @doc """
   Creates a sync_status.
 
   ## Examples
@@ -134,6 +152,24 @@ defmodule Finpilot.Gmail do
   def get_email!(id), do: Repo.get!(Email, id)
 
   @doc """
+  Gets an email by Gmail message ID.
+
+  ## Examples
+
+      iex> get_email_by_gmail_message_id("gmail_123")
+      %Email{}
+
+      iex> get_email_by_gmail_message_id("nonexistent")
+      nil
+
+  """
+  def get_email_by_gmail_message_id(gmail_message_id) do
+    Email
+    |> where([e], e.gmail_message_id == ^gmail_message_id)
+    |> Repo.one()
+  end
+
+  @doc """
   Creates a email.
 
   ## Examples
@@ -196,5 +232,56 @@ defmodule Finpilot.Gmail do
   """
   def change_email(%Email{} = email, attrs \\ %{}) do
     Email.changeset(email, attrs)
+  end
+
+  @doc """
+  Gets emails sent to a specific email address.
+
+  ## Examples
+
+      iex> emails_sent_to("user_123", "john@example.com")
+      [%Email{}, ...]
+
+  """
+  def emails_sent_to(user_id, email_address) do
+    from(e in Email,
+      where: e.user_id == ^user_id,
+      where: fragment("? ->> 'to' ILIKE ?", e.recipients, ^"%#{email_address}%")
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Gets emails with a specific recipient in CC.
+
+  ## Examples
+
+      iex> emails_with_cc("user_123", "jane@example.com")
+      [%Email{}, ...]
+
+  """
+  def emails_with_cc(user_id, email_address) do
+    from(e in Email,
+      where: e.user_id == ^user_id,
+      where: fragment("? ->> 'cc' ILIKE ?", e.recipients, ^"%#{email_address}%")
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Gets emails involving a specific email address (to, cc, or bcc).
+
+  ## Examples
+
+      iex> emails_involving("user_123", "contact@example.com")
+      [%Email{}, ...]
+
+  """
+  def emails_involving(user_id, email_address) do
+    from(e in Email,
+      where: e.user_id == ^user_id,
+      where: fragment("? ILIKE ?", e.recipients, ^"%#{email_address}%")
+    )
+    |> Repo.all()
   end
 end

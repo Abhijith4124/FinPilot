@@ -47,10 +47,13 @@ defmodule Finpilot.Gmail.EmailEmbeddings do
   Get emails that don't have embeddings yet.
   """
   def get_unprocessed_emails(user_id, limit \\ 100) do
+    # TODO: Remove the 100 email limit after testing
+    actual_limit = min(limit, 100)
+    
     from(e in Email,
       where: e.user_id == ^user_id and is_nil(e.embedding),
       order_by: [desc: e.received_at],
-      limit: ^limit
+      limit: ^actual_limit
     )
     |> Repo.all()
   end

@@ -4,10 +4,14 @@ defmodule Finpilot.Services.Gmail do
   """
 
   alias Finpilot.Accounts.User
+  alias Finpilot.Gmail
+  alias Finpilot.Gmail.{Email, SyncStatus}
+  alias Finpilot.Repo
   alias GoogleApi.Gmail.V1.Api.Users
   alias GoogleApi.Gmail.V1.Connection
   alias GoogleApi.Gmail.V1.Model.{Message, Draft}
   alias OAuth2
+  require Logger
 
   @doc """
   Sends an email using Gmail API.
@@ -271,6 +275,291 @@ defmodule Finpilot.Services.Gmail do
         {:error, error} ->
           {:error, "Failed to modify message labels: #{inspect(error)}"}
       end
+    end
+  end
+
+  @doc """
+  Syncs user emails from Gmail and saves them to the database.
+  
+  ## Parameters
+  - user_id: The user ID to sync emails for
+  - opts: Optional parameters like max_results, days_back
+  
+  ## Returns
+  - {:ok, sync_result} - Success with sync statistics
+  - {:error, reason} - Error during sync
+  """
+  def sync_user_emails(user_id, opts \\ []) do
+    Logger.info("Starting email sync for user #{user_id}")
+    
+    try do
+      case Finpilot.Accounts.get_user!(user_id) do
+        %User{} = user ->
+          do_sync_user_emails(user, opts)
+        nil ->
+          {:error, "User not found"}
+      end
+    rescue
+      Ecto.NoResultsError ->
+        {:error, "User not found"}
+    end
+  end
+
+  defp do_sync_user_emails(%User{} = user, opts) do
+    max_results = Keyword.get(opts, :max_results, 100)
+    days_back = Keyword.get(opts, :days_back, 30)
+    
+    # Get or create sync status
+    sync_status = Gmail.get_sync_status_by_user_id(user.id) || create_initial_sync_status(user.id)
+    
+    # Update sync status to "syncing"
+    {:ok, _} = Gmail.update_sync_status(sync_status, %{
+      sync_status: "syncing",
+      last_error_message: nil
+    })
+    
+    try do
+      # Calculate date range
+      end_date = DateTime.utc_now()
+      start_date = DateTime.add(end_date, -days_back * 24 * 60 * 60, :second)
+      
+      # Get messages from Gmail
+      case get_emails_by_date_range(user, start_date, end_date, max_results: max_results) do
+        {:ok, %{messages: messages}} when is_list(messages) ->
+          Logger.info("Found #{length(messages)} messages to sync for user #{user.id}")
+          
+          # Process messages in batches
+          {success_count, error_count} = process_messages_batch(user, messages)
+          
+          # Update sync status with results
+          {:ok, updated_sync_status} = Gmail.update_sync_status(sync_status, %{
+            sync_status: "completed",
+            last_sync_at: DateTime.utc_now(),
+            total_emails_processed: (sync_status.total_emails_processed || 0) + success_count,
+            last_error_message: if(error_count > 0, do: "#{error_count} emails failed to sync", else: nil)
+          })
+          
+          sync_result = %{
+            total_found: length(messages),
+            successfully_synced: success_count,
+            failed: error_count,
+            sync_status: updated_sync_status
+          }
+          
+          Logger.info("Email sync completed for user #{user.id}: #{inspect(sync_result)}")
+          {:ok, sync_result}
+          
+        {:ok, %{messages: nil}} ->
+          Logger.info("No new messages found for user #{user.id}")
+          
+          {:ok, _} = Gmail.update_sync_status(sync_status, %{
+            sync_status: "completed",
+            last_sync_at: DateTime.utc_now()
+          })
+          
+          {:ok, %{total_found: 0, successfully_synced: 0, failed: 0}}
+          
+        {:error, reason} ->
+          Logger.error("Failed to get emails for user #{user.id}: #{inspect(reason)}")
+          
+          {:ok, _} = Gmail.update_sync_status(sync_status, %{
+            sync_status: "error",
+            last_error_message: "Failed to fetch emails: #{inspect(reason)}"
+          })
+          
+          {:error, reason}
+      end
+    rescue
+      error ->
+        Logger.error("Exception during email sync for user #{user.id}: #{inspect(error)}")
+        
+        {:ok, _} = Gmail.update_sync_status(sync_status, %{
+          sync_status: "error",
+          last_error_message: "Sync failed with exception: #{inspect(error)}"
+        })
+        
+        {:error, "Sync failed with exception: #{inspect(error)}"}
+    end
+  end
+
+  defp create_initial_sync_status(user_id) do
+    {:ok, sync_status} = Gmail.create_sync_status(%{
+      user_id: user_id,
+      sync_status: "pending",
+      total_emails_processed: 0,
+      sync_from_date: Date.add(Date.utc_today(), -30),
+      sync_to_date: Date.utc_today()
+    })
+    sync_status
+  end
+
+  defp process_messages_batch(user, messages) do
+    Logger.info("Processing #{length(messages)} messages for user #{user.id}")
+    
+    results = Enum.map(messages, fn message ->
+      process_single_message(user, message.id)
+    end)
+    
+    # Count successes and failures
+    Enum.reduce(results, {0, 0}, fn
+      {:ok, _}, {successes, failures} -> {successes + 1, failures}
+      {:error, _}, {successes, failures} -> {successes, failures + 1}
+    end)
+  end
+
+  defp process_single_message(user, message_id) do
+    case get_email(user, message_id, format: "full") do
+      {:ok, gmail_message} ->
+        # Check if email already exists
+        case Gmail.get_email_by_gmail_message_id(message_id) do
+          nil ->
+            # Create new email record
+            email_attrs = extract_email_attributes(gmail_message, user.id)
+            case Gmail.create_email(email_attrs) do
+              {:ok, email} ->
+                Logger.debug("Created email #{email.id} for message #{message_id}")
+                {:ok, email}
+              {:error, changeset} ->
+                Logger.error("Failed to create email for message #{message_id}: #{inspect(changeset.errors)}")
+                {:error, "Failed to create email"}
+            end
+          
+          existing_email ->
+            # Email already exists, optionally update it
+            Logger.debug("Email already exists for message #{message_id}")
+            {:ok, existing_email}
+        end
+        
+      {:error, reason} ->
+        Logger.error("Failed to fetch message #{message_id}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp extract_email_attributes(gmail_message, user_id) do
+    headers = get_headers_map(gmail_message.payload.headers || [])
+    
+    %{
+      gmail_message_id: gmail_message.id,
+      subject: Map.get(headers, "subject", ""),
+      sender: Map.get(headers, "from", ""),
+      recipients: extract_all_recipients(headers),
+      content: extract_email_content(gmail_message.payload),
+      received_at: parse_gmail_date(Map.get(headers, "date")),
+      thread_id: gmail_message.threadId,
+      labels: gmail_message.labelIds || [],
+      user_id: user_id
+    }
+  end
+
+  defp get_headers_map(headers) do
+    Enum.reduce(headers, %{}, fn %{name: name, value: value}, acc ->
+      Map.put(acc, String.downcase(name), value)
+    end)
+  end
+
+  defp extract_all_recipients(headers) do
+    to_recipients = parse_email_addresses(Map.get(headers, "to", ""))
+    cc_recipients = parse_email_addresses(Map.get(headers, "cc", ""))
+    bcc_recipients = parse_email_addresses(Map.get(headers, "bcc", ""))
+    
+    %{
+      to: to_recipients,
+      cc: cc_recipients,
+      bcc: bcc_recipients
+    }
+    |> Jason.encode!()
+  end
+
+  defp parse_email_addresses(""), do: []
+  defp parse_email_addresses(email_string) do
+    email_string
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp extract_email_content(payload) do
+    cond do
+      payload.body && payload.body.data ->
+        Base.decode64!(payload.body.data, padding: false)
+        
+      payload.parts ->
+        payload.parts
+        |> Enum.find(fn part -> part.mimeType in ["text/plain", "text/html"] end)
+        |> case do
+          %{body: %{data: data}} when is_binary(data) ->
+            Base.decode64!(data, padding: false)
+          _ ->
+            ""
+        end
+        
+      true ->
+        ""
+    end
+  rescue
+    _ -> ""
+  end
+
+  defp parse_gmail_date(nil), do: DateTime.utc_now()
+  defp parse_gmail_date(date_string) do
+    case DateTime.from_iso8601(date_string) do
+      {:ok, datetime, _} -> datetime
+      _ ->
+        # Try parsing common email date formats
+        case parse_rfc2822_date(date_string) do
+          {:ok, datetime} -> datetime
+          _ -> DateTime.utc_now()
+        end
+    end
+  rescue
+    _ -> DateTime.utc_now()
+  end
+
+  # Simple RFC 2822 date parser for common Gmail date formats
+  defp parse_rfc2822_date(date_string) do
+    # Remove day of week if present (e.g., "Mon, 01 Jan 2024 12:00:00 +0000")
+    cleaned = String.replace(date_string, ~r/^\w+,\s*/, "")
+    
+    # Try to parse with different timezone formats
+    case Regex.run(~r/(\d{1,2})\s+(\w+)\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([+-]\d{4}|\w+)/, cleaned) do
+      [_, day, month, year, hour, minute, second, tz] ->
+        try do
+          month_num = month_to_number(month)
+          date = Date.new!(String.to_integer(year), month_num, String.to_integer(day))
+          time = Time.new!(String.to_integer(hour), String.to_integer(minute), String.to_integer(second))
+          naive_dt = NaiveDateTime.new!(date, time)
+          
+          # Convert to UTC (simplified - assumes common timezones)
+          case tz do
+            "+0000" -> {:ok, DateTime.from_naive!(naive_dt, "Etc/UTC")}
+            "GMT" -> {:ok, DateTime.from_naive!(naive_dt, "Etc/UTC")}
+            "UTC" -> {:ok, DateTime.from_naive!(naive_dt, "Etc/UTC")}
+            _ -> {:ok, DateTime.from_naive!(naive_dt, "Etc/UTC")} # Default to UTC
+          end
+        rescue
+          _ -> {:error, :invalid_date}
+        end
+      _ ->
+        {:error, :invalid_format}
+    end
+  end
+
+  defp month_to_number(month) do
+    case String.downcase(month) do
+      "jan" -> 1
+      "feb" -> 2
+      "mar" -> 3
+      "apr" -> 4
+      "may" -> 5
+      "jun" -> 6
+      "jul" -> 7
+      "aug" -> 8
+      "sep" -> 9
+      "oct" -> 10
+      "nov" -> 11
+      "dec" -> 12
+      _ -> 1 # Default to January
     end
   end
 

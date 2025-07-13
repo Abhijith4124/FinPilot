@@ -14,8 +14,8 @@ defmodule Finpilot.Application do
       {Phoenix.PubSub, name: Finpilot.PubSub},
       # Start the Finch HTTP client for sending emails
       {Finch, name: Finpilot.Finch},
-      # Start a worker by calling: Finpilot.Worker.start_link(arg)
-      # {Finpilot.Worker, arg},
+      # Start Oban for background job processing
+      {Oban, Application.get_env(:finpilot, Oban)},
       # Start to serve requests, typically the last entry
       FinpilotWeb.Endpoint
     ]

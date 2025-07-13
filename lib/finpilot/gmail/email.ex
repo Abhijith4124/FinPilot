@@ -26,7 +26,17 @@ defmodule Finpilot.Gmail.Email do
     email
     |> cast(attrs, [:gmail_message_id, :subject, :sender, :recipients, :content, :received_at, :thread_id, :labels, :embedding, :processed_at, :user_id])
     |> validate_required([:gmail_message_id, :subject, :sender, :content, :received_at, :thread_id, :user_id])
+    |> validate_recipients()
     |> unique_constraint(:gmail_message_id)
     |> foreign_key_constraint(:user_id)
+  end
+
+  defp validate_recipients(changeset) do
+    validate_change(changeset, :recipients, fn :recipients, recipients ->
+      case Jason.decode(recipients) do
+        {:ok, %{"to" => to_list}} when is_list(to_list) -> []
+        _ -> [recipients: "must be valid JSON with recipient lists"]
+      end
+    end)
   end
 end

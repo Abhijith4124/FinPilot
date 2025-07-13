@@ -172,7 +172,7 @@
         </button>
       </div>
       <div class="flex items-center space-x-4">
-        <button class="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800">
+        <button phx-click="new_chat" class="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
           </svg>
@@ -194,102 +194,113 @@
      <!-- Messages Container -->
     <div class="flex-1 overflow-y-auto px-4 py-6">
       <div class="space-y-6">
-        <!-- User Message -->
-        <div class="flex justify-end mb-4">
-          <div class="max-w-xs lg:max-w-md">
-            <div class="bg-blue-500 text-white rounded-lg px-4 py-2 shadow">
-              <p class="text-sm">Find meetings I've had with <strong>Bill</strong> and <strong>Tim</strong> this month</p>
+        <%= if @messages == [] do %>
+          <!-- Welcome Message -->
+          <div class="flex justify-center">
+            <div class="text-center max-w-md">
+              <div class="w-16 h-16 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span class="text-xl text-white font-bold">FP</span>
+              </div>
+              <h3 class="text-lg font-medium text-gray-900 mb-2">Welcome to FinPilot</h3>
+              <p class="text-gray-600 text-sm">Ask about emails, clients, schedule meetings, or assign tasks. I'm here to help with your Gmail, Calendar, and HubSpot.</p>
             </div>
           </div>
-        </div>
-
-        <!-- AI Response -->
-        <div class="flex justify-start mb-4">
-          <div class="max-w-xs lg:max-w-md">
-            <div class="bg-gray-100 text-gray-900 rounded-lg px-4 py-2 shadow">
-              <div class="flex items-center space-x-2 mb-2">
-                <div class="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
-                  <span class="text-xs text-white font-medium">AI</span>
+        <% else %>
+          <!-- Dynamic Messages -->
+          <%= for message <- @messages do %>
+            <%= if message.role == "user" do %>
+              <!-- User Message -->
+              <div class="flex justify-end mb-4">
+                <div class="max-w-xs lg:max-w-md">
+                  <div class="bg-blue-500 text-white rounded-lg px-4 py-2 shadow">
+                    <p class="text-sm"><%= message.message %></p>
+                  </div>
+                  <div class="text-xs text-gray-500 mt-1 text-right">
+                    <%= Calendar.strftime(message.inserted_at, "%I:%M %p") %>
+                  </div>
                 </div>
-                <span class="text-xs text-gray-500">FinPilot</span>
               </div>
-              <p class="text-sm">Sure, here are some recent meetings that you, Bill, and Tim all attended. I found 2 in May. <span class="inline-block">⚡</span></p>
+            <% else %>
+              <!-- AI Response -->
+              <div class="flex justify-start mb-4">
+                <div class="max-w-xs lg:max-w-md">
+                  <div class="bg-gray-100 text-gray-900 rounded-lg px-4 py-2 shadow">
+                    <div class="flex items-center space-x-2 mb-2">
+                      <div class="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
+                        <span class="text-xs text-white font-medium">AI</span>
+                      </div>
+                      <span class="text-xs text-gray-500">FinPilot</span>
+                    </div>
+                    <p class="text-sm"><%= message.message %></p>
+                  </div>
+                  <div class="text-xs text-gray-500 mt-1">
+                    <%= Calendar.strftime(message.inserted_at, "%I:%M %p") %>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+          <% end %>
+        <% end %>
+        
+        <!-- Loading Indicator -->
+        <%= if @loading do %>
+          <div class="flex justify-start mb-4">
+            <div class="max-w-xs lg:max-w-md">
+              <div class="bg-gray-100 text-gray-900 rounded-lg px-4 py-2 shadow">
+                <div class="flex items-center space-x-2 mb-2">
+                  <div class="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
+                    <span class="text-xs text-white font-medium">AI</span>
+                  </div>
+                  <span class="text-xs text-gray-500">FinPilot</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                  <span class="text-sm text-gray-600">Thinking...</span>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-
-        <!-- Meeting Results -->
-        <div class="space-y-4">
-            
-            <!-- Meeting Cards -->
-            <div class="space-y-3">
-              <!-- Thursday Meeting -->
-              <div class="bg-white border border-gray-200 rounded-lg p-4">
-                <div class="flex items-start justify-between mb-2">
-                  <div class="text-sm font-medium text-gray-900">8 Thursday</div>
-                </div>
-                <div class="text-xs text-gray-500 mb-2">12 – 1:30pm</div>
-                <div class="text-sm font-medium text-gray-900 mb-2">Quarterly All Team Meeting</div>
-                <div class="flex -space-x-1">
-                  <div class="w-6 h-6 bg-blue-500 rounded-full border-2 border-white"></div>
-                  <div class="w-6 h-6 bg-green-500 rounded-full border-2 border-white"></div>
-                  <div class="w-6 h-6 bg-orange-500 rounded-full border-2 border-white"></div>
-                  <div class="w-6 h-6 bg-purple-500 rounded-full border-2 border-white"></div>
-                </div>
-              </div>
-
-              <!-- Friday Meeting -->
-              <div class="bg-white border border-gray-200 rounded-lg p-4">
-                <div class="flex items-start justify-between mb-2">
-                  <div class="text-sm font-medium text-gray-900">16 Friday</div>
-                </div>
-                <div class="text-xs text-gray-500 mb-2">1 –2pm</div>
-                <div class="text-sm font-medium text-gray-900 mb-2">Strategy review</div>
-                <div class="flex -space-x-1">
-                  <div class="w-6 h-6 bg-blue-500 rounded-full border-2 border-white"></div>
-                  <div class="w-6 h-6 bg-orange-500 rounded-full border-2 border-white"></div>
-                </div>
-              </div>
-            </div>
-        </div>
-          
-        <!-- Final AI Message -->
-        <div class="flex justify-start mb-4">
-          <div class="max-w-xs lg:max-w-md">
-            <div class="bg-gray-100 text-gray-900 rounded-lg px-4 py-2 shadow">
-              <div class="flex items-center space-x-2 mb-2">
-                <div class="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
-                  <span class="text-xs text-white font-medium">AI</span>
-                </div>
-                <span class="text-xs text-gray-500">FinPilot</span>
-              </div>
-              <p class="text-sm">I can summarize these meetings, schedule a follow up, and more!</p>
-            </div>
-          </div>
-        </div>
+        <% end %>
       </div>
     </div>
 
     <!-- Input Area -->
     <div class="border-t border-gray-200 bg-white px-4 py-4">
-      <div class="flex items-center space-x-3">
-        <button class="p-2 text-gray-400 hover:text-gray-600">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-          </svg>
-        </button>
-        <div class="flex-1">
-          <div class="relative">
-            <input
-              type="text"
-              class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Ask about emails, clients, schedule meetings, or assign tasks..."
-            />
-
+      <%= if @current_user do %>
+        <form phx-submit="send_message" class="flex items-center space-x-3">
+          <div class="flex-1">
+            <div class="relative">
+              <input
+                type="text"
+                name="message"
+                value={@new_message}
+                phx-change="update_message"
+                disabled={@loading}
+                class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                placeholder="Ask about emails, clients, schedule meetings, or assign tasks..."
+                autocomplete="off"
+              />
+            </div>
           </div>
+          <button 
+            type="submit" 
+            disabled={@loading || String.trim(@new_message) == ""}
+            class="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          >
+            <%= if @loading do %>
+              <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+            <% else %>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+              </svg>
+            <% end %>
+          </button>
+        </form>
+      <% else %>
+        <div class="text-center text-gray-500">
+          <p>Please sign in to start chatting</p>
         </div>
-      </div>
-
+      <% end %>
     </div>
   </main>
 </div>

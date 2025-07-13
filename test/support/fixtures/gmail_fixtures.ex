@@ -36,7 +36,7 @@ defmodule Finpilot.GmailFixtures do
         labels: "some labels",
         processed_at: ~U[2025-07-11 18:46:00Z],
         received_at: ~U[2025-07-11 18:46:00Z],
-        recipients: "some recipients",
+        recipients: Jason.encode!(%{to: ["recipient@example.com"], cc: [], bcc: []}),
         sender: "some sender",
         subject: "some subject",
         thread_id: "some thread_id"

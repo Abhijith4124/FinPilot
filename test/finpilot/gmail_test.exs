@@ -87,14 +87,14 @@ defmodule Finpilot.GmailTest do
     end
 
     test "create_email/1 with valid data creates a email" do
-      valid_attrs = %{labels: "some labels", gmail_message_id: "some gmail_message_id", subject: "some subject", sender: "some sender", recipients: "some recipients", content: "some content", received_at: ~U[2025-07-11 18:46:00Z], thread_id: "some thread_id", processed_at: ~U[2025-07-11 18:46:00Z]}
+      valid_attrs = %{labels: "some labels", gmail_message_id: "some gmail_message_id", subject: "some subject", sender: "some sender", recipients: Jason.encode!(%{to: ["test@example.com"], cc: [], bcc: []}), content: "some content", received_at: ~U[2025-07-11 18:46:00Z], thread_id: "some thread_id", processed_at: ~U[2025-07-11 18:46:00Z]}
 
       assert {:ok, %Email{} = email} = Gmail.create_email(valid_attrs)
       assert email.labels == "some labels"
       assert email.gmail_message_id == "some gmail_message_id"
       assert email.subject == "some subject"
       assert email.sender == "some sender"
-      assert email.recipients == "some recipients"
+      assert email.recipients == Jason.encode!(%{to: ["test@example.com"], cc: [], bcc: []})
       assert email.content == "some content"
       assert email.received_at == ~U[2025-07-11 18:46:00Z]
       assert email.thread_id == "some thread_id"
@@ -107,14 +107,14 @@ defmodule Finpilot.GmailTest do
 
     test "update_email/2 with valid data updates the email" do
       email = email_fixture()
-      update_attrs = %{labels: "some updated labels", gmail_message_id: "some updated gmail_message_id", subject: "some updated subject", sender: "some updated sender", recipients: "some updated recipients", content: "some updated content", received_at: ~U[2025-07-12 18:46:00Z], thread_id: "some updated thread_id", processed_at: ~U[2025-07-12 18:46:00Z]}
+      update_attrs = %{labels: "some updated labels", gmail_message_id: "some updated gmail_message_id", subject: "some updated subject", sender: "some updated sender", recipients: Jason.encode!(%{to: ["updated@example.com"], cc: ["cc@example.com"], bcc: []}), content: "some updated content", received_at: ~U[2025-07-12 18:46:00Z], thread_id: "some updated thread_id", processed_at: ~U[2025-07-12 18:46:00Z]}
 
       assert {:ok, %Email{} = email} = Gmail.update_email(email, update_attrs)
       assert email.labels == "some updated labels"
       assert email.gmail_message_id == "some updated gmail_message_id"
       assert email.subject == "some updated subject"
       assert email.sender == "some updated sender"
-      assert email.recipients == "some updated recipients"
+      assert email.recipients == Jason.encode!(%{to: ["updated@example.com"], cc: ["cc@example.com"], bcc: []})
       assert email.content == "some updated content"
       assert email.received_at == ~U[2025-07-12 18:46:00Z]
       assert email.thread_id == "some updated thread_id"
