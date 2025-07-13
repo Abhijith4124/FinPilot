@@ -12,9 +12,10 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   require Logger
 
   alias Finpilot.Tasks.{Task, Instruction}
-  alias Finpilot.Workers.ToolExecutor
+  alias Finpilot.Workers.TaskExecutor
   alias Finpilot.Services.OpenRouter
   alias Finpilot.Services.Memory
+  alias Finpilot.ChatMessages
   alias Finpilot.Repo
   import Ecto.Query
 
@@ -104,18 +105,16 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     try do
       tasks =
         from(t in Task,
-          where: t.user_id == ^user_id and t.is_done == false,
-          preload: [:task_stages]
+          where: t.user_id == ^user_id and t.is_done == false
         )
         |> Repo.all()
         |> Enum.map(fn task ->
           %{
             id: task.id,
             task_instruction: task.task_instruction,
-            current_stage_summary: task.current_stage_summary,
-            next_stage_instruction: task.next_stage_instruction,
-            context: task.context,
-            task_stages: task.task_stages
+            current_summary: task.current_summary,
+            next_instruction: task.next_instruction,
+            context: task.context
           }
         end)
 
@@ -187,7 +186,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     Logger.debug("[AIProcessingWorker] Prompt length: #{String.length(prompt)} characters")
 
     Logger.debug("[AIProcessingWorker] Getting tool definitions")
-    tool_definitions = ToolExecutor.tool_definitions()
+    tool_definitions = get_tool_definitions()
     tools = OpenRouter.format_tools(tool_definitions)
     Logger.debug("[AIProcessingWorker] Using #{length(tools)} tools")
 
@@ -224,7 +223,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
         Logger.info("[AIProcessingWorker] Executing tool #{index}/#{length(tool_calls)}: #{tool_name} for user #{user_id}")
         Logger.debug("[AIProcessingWorker] Tool args: #{inspect(tool_args)}")
 
-        case ToolExecutor.execute_tool(tool_name, tool_args, user_id) do
+        case execute_tool(tool_name, tool_args, user_id) do
           {:ok, result} ->
             Logger.info("[AIProcessingWorker] Tool #{tool_name} executed successfully for user #{user_id}")
             Logger.debug("[AIProcessingWorker] Tool result: #{inspect(result)}")
@@ -246,24 +245,23 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   # Get system prompt for AI
   defp get_system_prompt do
     """
-    You are FinPilot, an intelligent AI assistant that manages business operations through structured tool calls.
+    You are FinPilot, an intelligent AI assistant that analyzes incoming text and creates tasks for complex multi-step processes.
 
     CRITICAL: You MUST ONLY respond using tool calls. Never provide text responses or explanations outside of tool calls.
 
     Your responsibilities:
     1. Analyze incoming text from various sources (chat, email, calendar, CRM, etc.)
-    2. Execute appropriate actions using the available tools
-    3. Create and manage multi-stage tasks
-    4. Send messages to users via the assistant_message tool
-    5. Perform business operations like email sending, meeting scheduling, CRM updates
+    2. Create tasks for actionable items that require multiple steps
+    3. Send messages to users via the assistant_message tool
+    4. Identify business operations that need to be performed
 
     CONTEXT SECTIONS:
 
     INCOMING TEXT:
-    - Source: Origin of the text (chat, email, webhook, task_continuation, etc.)
+    - Source: Origin of the text (chat, email, webhook, etc.)
     - Content: The actual message/text to process
     - Timestamp: When this processing request was made
-    - Metadata: Additional context (session_id, task_id, continuation_depth, etc.)
+    - Metadata: Additional context (session_id, etc.)
 
     ACTIVE INSTRUCTIONS:
     - User-defined automation rules and preferences
@@ -272,28 +270,41 @@ defmodule Finpilot.Workers.AIProcessingWorker do
 
     RUNNING TASKS:
     - Currently active, incomplete tasks
-    - Shows: task ID, instruction, current stage, next stage
+    - Shows: task ID, instruction, current summary, next instruction
     - Avoid duplicating work already in progress
-    - Consider updating existing tasks instead of creating new ones
+    - Only create new tasks if they don't overlap with existing ones
 
     RELEVANT MEMORY:
     - Semantically similar past tasks and messages
     - Helps avoid repeating previous work
-    - Use for informed decision-making about task creation/updates
-    - Empty for task continuations to prevent infinite loops
+    - Use for informed decision-making about task creation
+
+    TASK CREATION GUIDELINES:
+    - Tasks are used to build chains of tool calls for multi-step processes
+    - task_instruction: Detailed instruction on what the task should achieve to be complete
+    - current_summary: Summary of what has been done (initially empty for new tasks)
+    - next_instruction: What the AI should do when processing this task next
+    - Only create tasks for complex processes that require multiple steps or external actions
+    - Simple responses should use assistant_message tool directly
+
+    AVAILABLE SEARCH AND MEMORY OPERATIONS:
+    When creating task instructions, you can reference these available operations that the task executor can perform:
+    - search_tasks: Search for similar tasks based on semantic similarity (requires query parameter)
+    - search_chat_messages: Search for similar chat messages based on semantic similarity (requires query parameter, optional: limit, threshold, role_filter, session_id)
+    - find_relevant_context: Find relevant context by searching both tasks and chat messages (requires query parameter, optional: task_limit, message_limit, threshold)
+
+    IMPORTANT: These are NOT tool calls for you to make directly. These are operations that can be included in task instructions for the task executor to perform.
 
     TOOL USAGE RULES:
     1. ALWAYS use tool calls - never respond with plain text
     2. Use assistant_message tool to communicate with users
-    3. Use create_task tool for actionable items that require multiple steps
-    4. Use update_task tool to progress existing tasks
-    5. Use complete_task tool when tasks are finished
-    6. Only create tasks for actions supported by available tools
-    7. Be proactive in identifying actionable items from incoming text
-    8. Consider context from running tasks and user instructions
-    9. Use relevant memory to avoid duplicating previous decisions
+    3. Use create_task tool ONLY for actionable items requiring multiple steps
+    4. Be proactive in identifying actionable items from incoming text
+    5. Consider context from running tasks and user instructions
+    6. Use relevant memory to avoid duplicating previous decisions
+    7. If user requests invalid operations, use create_assistant_message to explain limitations
 
-    Remember: Every response must be a tool call. Use assistant_message for any communication needs.
+    Remember: Every response must be a tool call. Task execution and updates are handled by a separate system.
     """
   end
 
@@ -301,6 +312,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   defp build_ai_prompt(context) do
     instructions_text = format_instructions(context.instructions)
     tasks_text = format_running_tasks(context.running_tasks)
+    memory_text = format_relevant_memory(context.relevant_memory)
 
     """
     INCOMING TEXT:
@@ -345,8 +357,8 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       """
       Task ID: #{task.id}
       Instruction: #{task.task_instruction}
-      Current Stage: #{task.current_stage_summary || "Not started"}
-      Next Stage: #{task.next_stage_instruction || "None"}
+      Current Summary: #{task.current_summary || "Not started"}
+      Next Instruction: #{task.next_instruction || "None"}
       """
     end)
     |> Enum.join("\n---\n")
@@ -391,4 +403,163 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       _ -> "Unknown date"
     end
   end
+
+  # Get tool definitions for AI processing
+  defp get_tool_definitions do
+    [
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_task",
+          "description" => "Create a new task for complex multi-step processes that require ongoing execution and updates",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "task_instruction" => %{
+                "type" => "string",
+                "description" => "Detailed instruction describing what the task should achieve to be considered complete"
+              },
+              "current_summary" => %{
+                "type" => "string",
+                "description" => "Summary of what has been done so far (initially empty for new tasks)",
+                "default" => ""
+              },
+              "next_instruction" => %{
+                "type" => "string",
+                "description" => "Specific instruction for what the AI should do when processing this task next"
+              },
+              "context" => %{
+                "type" => "object",
+                "description" => "Additional context and metadata for the task",
+                "default" => %{}
+              }
+            },
+            "required" => ["task_instruction", "next_instruction"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_assistant_message",
+          "description" => "Send a message to the user as the AI assistant",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "message" => %{
+                "type" => "string",
+                "description" => "The message content to send to the user"
+              },
+              "session_id" => %{
+                "type" => "string",
+                "description" => "Optional chat session ID to associate the message with"
+              }
+            },
+            "required" => ["message"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "create_system_message",
+          "description" => "Create a system message for logging or internal communication",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "message" => %{
+                "type" => "string",
+                "description" => "The system message content"
+              },
+              "session_id" => %{
+                "type" => "string",
+                "description" => "Optional chat session ID to associate the message with"
+              }
+            },
+            "required" => ["message"]
+          }
+        }
+      }
+    ]
+  end
+
+  # Execute tool calls locally
+  defp execute_tool("create_task", args, user_id) do
+    Logger.info("[AIProcessingWorker] Creating task for user #{user_id}")
+    
+    task_params = %{
+      user_id: user_id,
+      task_instruction: args["task_instruction"] || "",
+      current_summary: args["current_summary"] || "",
+      next_instruction: args["next_instruction"] || "",
+      context: args["context"] || %{},
+      is_done: false
+    }
+    
+    case Finpilot.Tasks.create_task(task_params) do
+      {:ok, task} ->
+        Logger.info("[AIProcessingWorker] Task created successfully: #{task.id}")
+        
+        # Enqueue the task for execution
+        case TaskExecutor.new(%{"task_id" => task.id}) |> Oban.insert() do
+          {:ok, job} ->
+            Logger.info("[AIProcessingWorker] Task execution job enqueued: #{job.id}")
+            {:ok, %{task_id: task.id, job_id: job.id, message: "Task created and execution started"}}
+          {:error, reason} ->
+            Logger.error("[AIProcessingWorker] Failed to enqueue task execution: #{reason}")
+            {:error, "Failed to start task execution: #{reason}"}
+        end
+        
+      {:error, changeset} ->
+        Logger.error("[AIProcessingWorker] Failed to create task: #{inspect(changeset.errors)}")
+        {:error, "Failed to create task: #{inspect(changeset.errors)}"}
+    end
+  end
+  
+  defp execute_tool("create_assistant_message", args, user_id) do
+    Logger.info("[AIProcessingWorker] Creating assistant message for user #{user_id}")
+    
+    message_params = %{
+      user_id: user_id,
+      role: "assistant",
+      message: args["message"],
+      session_id: args["session_id"]
+    }
+    
+    case ChatMessages.create_chat_message(message_params) do
+      {:ok, message} ->
+        Logger.info("[AIProcessingWorker] Assistant message created: #{message.id}")
+        {:ok, %{message_id: message.id, content: message.message}}
+      {:error, changeset} ->
+        Logger.error("[AIProcessingWorker] Failed to create assistant message: #{inspect(changeset.errors)}")
+        {:error, "Failed to create message: #{inspect(changeset.errors)}"}
+    end
+  end
+  
+  defp execute_tool("create_system_message", args, user_id) do
+    Logger.info("[AIProcessingWorker] Creating system message for user #{user_id}")
+    
+    message_params = %{
+      user_id: user_id,
+      role: "system",
+      message: args["message"],
+      session_id: args["session_id"]
+    }
+    
+    case ChatMessages.create_chat_message(message_params) do
+      {:ok, message} ->
+        Logger.info("[AIProcessingWorker] System message created: #{message.id}")
+        {:ok, %{message_id: message.id, content: message.message}}
+      {:error, changeset} ->
+        Logger.error("[AIProcessingWorker] Failed to create system message: #{inspect(changeset.errors)}")
+        {:error, "Failed to create message: #{inspect(changeset.errors)}"}
+    end
+  end
+  
+  defp execute_tool(tool_name, _args, user_id) do
+    Logger.error("[AIProcessingWorker] Unknown tool: #{tool_name} for user #{user_id}")
+    {:error, "Unknown tool: #{tool_name}"}
+  end
+
+
 end

@@ -42,7 +42,7 @@ defmodule Finpilot.Services.Memory do
         select: %{
           id: t.id,
           task_instruction: t.task_instruction,
-          current_stage_summary: t.current_stage_summary,
+          current_summary: t.current_summary,
           is_done: t.is_done,
           context: t.context,
           inserted_at: t.inserted_at,

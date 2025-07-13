@@ -1,36 +1,33 @@
 defmodule Finpilot.Workers.ToolExecutor do
   @moduledoc """
-  Handles execution of AI-selected tools within the Tasks system.
+  Handles execution of AI-selected tools for memory and search operations.
   This module provides a centralized way to execute various tools
-  that the AI can call to complete tasks and manage chat messages.
+  that the AI can call to search and retrieve relevant context.
   """
 
   require Logger
-  alias Finpilot.Tasks
-  alias Finpilot.ChatMessages
+  alias Finpilot.Services.Memory
 
   @doc """
   Execute a tool with the given name, arguments, and user context.
   
   ## Examples
   
-      iex> ToolExecutor.execute_tool("create_task", %{"task_instruction" => "Send email"}, user_id)
-      {:ok, %Task{}}
+      iex> ToolExecutor.execute_tool("search_tasks", %{"query" => "Send email"}, user_id)
+      {:ok, [%{id: 1, task_instruction: "...", similarity: 0.85}]}
       
-      iex> ToolExecutor.execute_tool("create_assistant_message", %{"session_id" => "123", "message" => "Hello"}, user_id)
-      {:ok, %ChatMessage{}}
+      iex> ToolExecutor.execute_tool("search_chat_messages", %{"query" => "Hello"}, user_id)
+      {:ok, [%{id: 1, message: "...", similarity: 0.90}]}
       
-      iex> ToolExecutor.execute_tool("create_system_message", %{"session_id" => "123", "message" => "System ready"}, user_id)
-      {:ok, %ChatMessage{}}
+      iex> ToolExecutor.execute_tool("find_relevant_context", %{"query" => "email setup"}, user_id)
+      {:ok, %{tasks: [...], messages: [...]}}
   """
   def execute_tool(tool_name, args, user_id) do
     case tool_name do
-      "create_assistant_message" -> create_assistant_message(args, user_id)
-      "create_system_message" -> create_system_message(args, user_id)
-      "create_task" -> create_task(args, user_id)
-      "edit_task" -> edit_task(args, user_id)
-      "create_task_stage" -> create_task_stage(args, user_id)
-      "edit_task_stage" -> edit_task_stage(args, user_id)
+      "search_tasks" -> search_tasks(args, user_id)
+      "search_chat_messages" -> search_chat_messages(args, user_id)
+      "find_relevant_context" -> find_relevant_context(args, user_id)
+
       _ -> {:error, "Unknown tool: #{tool_name}"}
     end
   end
@@ -44,250 +41,91 @@ defmodule Finpilot.Workers.ToolExecutor do
       %{
         "type" => "function",
         "function" => %{
-          "name" => "create_assistant_message",
-          "description" => "Create an assistant message in a chat session",
+          "name" => "search_tasks",
+          "description" => "Search for similar tasks based on semantic similarity",
           "parameters" => %{
             "type" => "object",
             "properties" => %{
-              "session_id" => %{
+              "query" => %{
                 "type" => "string",
-                "description" => "The ID of the chat session"
+                "description" => "The search query to find similar tasks"
               },
-              "message" => %{
-                "type" => "string",
-                "description" => "The message content from the assistant"
-              }
-            },
-            "required" => ["session_id", "message"]
-          }
-        }
-      },
-      %{
-        "type" => "function",
-        "function" => %{
-          "name" => "create_system_message",
-          "description" => "Create a system message in a chat session",
-          "parameters" => %{
-            "type" => "object",
-            "properties" => %{
-              "session_id" => %{
-                "type" => "string",
-                "description" => "The ID of the chat session"
+              "limit" => %{
+                "type" => "integer",
+                "description" => "Maximum number of results to return (default: 10)"
               },
-              "message" => %{
-                "type" => "string",
-                "description" => "The system message content"
-              }
-            },
-            "required" => ["session_id", "message"]
-          }
-        }
-      },
-      %{
-        "type" => "function",
-        "function" => %{
-          "name" => "create_task",
-          "description" => "Create a new task for the user",
-          "parameters" => %{
-            "type" => "object",
-            "properties" => %{
-              "task_instruction" => %{
-                "type" => "string",
-                "description" => "The main instruction or description of the task"
+              "threshold" => %{
+                "type" => "number",
+                "description" => "Similarity threshold (default: 0.7)"
               },
-              "current_stage_summary" => %{
-                "type" => "string",
-                "description" => "Summary of the current stage of the task"
-              },
-              "next_stage_instruction" => %{
-                "type" => "string",
-                "description" => "Instruction for the next stage of the task"
-              },
-              "context" => %{
-                "type" => "object",
-                "description" => "Additional context data for the task"
-              }
-            },
-            "required" => ["task_instruction", "current_stage_summary", "next_stage_instruction"]
-          }
-        }
-      },
-      %{
-        "type" => "function",
-        "function" => %{
-          "name" => "edit_task",
-          "description" => "Edit an existing task",
-          "parameters" => %{
-            "type" => "object",
-            "properties" => %{
-              "task_id" => %{
-                "type" => "string",
-                "description" => "The ID of the task to edit"
-              },
-              "task_instruction" => %{
-                "type" => "string",
-                "description" => "Updated task instruction"
-              },
-              "current_stage_summary" => %{
-                "type" => "string",
-                "description" => "Updated current stage summary"
-              },
-              "next_stage_instruction" => %{
-                "type" => "string",
-                "description" => "Updated next stage instruction"
-              },
-              "is_done" => %{
+              "include_completed" => %{
                 "type" => "boolean",
-                "description" => "Whether the task is completed"
-              },
-              "context" => %{
-                "type" => "object",
-                "description" => "Updated context data"
+                "description" => "Include completed tasks (default: true)"
               }
             },
-            "required" => ["task_id"]
+            "required" => ["query"]
           }
         }
       },
       %{
         "type" => "function",
         "function" => %{
-          "name" => "create_task_stage",
-          "description" => "Create a new stage for a task",
+          "name" => "search_chat_messages",
+          "description" => "Search for similar chat messages based on semantic similarity",
           "parameters" => %{
             "type" => "object",
             "properties" => %{
-              "task_id" => %{
+              "query" => %{
                 "type" => "string",
-                "description" => "The ID of the task this stage belongs to"
+                "description" => "The search query to find similar messages"
               },
-              "stage_name" => %{
+              "limit" => %{
+                "type" => "integer",
+                "description" => "Maximum number of results to return (default: 10)"
+              },
+              "threshold" => %{
+                "type" => "number",
+                "description" => "Similarity threshold (default: 0.7)"
+              },
+              "role_filter" => %{
                 "type" => "string",
-                "description" => "Name of the stage"
+                "description" => "Filter by message role (user, assistant, system)"
               },
-              "stage_type" => %{
-                "type" => "string",
-                "description" => "Type of the stage (e.g., 'email', 'api_call', 'user_input')"
-              },
-              "tool_name" => %{
-                "type" => "string",
-                "description" => "Name of the tool to be used in this stage"
-              },
-              "tool_params" => %{
-                "type" => "object",
-                "description" => "Parameters for the tool"
-              },
-              "ai_reasoning" => %{
-                "type" => "string",
-                "description" => "AI's reasoning for this stage"
-              },
-              "status" => %{
-                "type" => "string",
-                "description" => "Status of the stage (e.g., 'pending', 'in_progress', 'completed', 'failed')"
-              }
-            },
-            "required" => ["task_id", "stage_name", "stage_type", "tool_name", "ai_reasoning", "status"]
-          }
-        }
-      },
-      %{
-        "type" => "function",
-        "function" => %{
-          "name" => "edit_task_stage",
-          "description" => "Edit an existing task stage",
-          "parameters" => %{
-            "type" => "object",
-            "properties" => %{
-              "stage_id" => %{
-                "type" => "string",
-                "description" => "The ID of the stage to edit"
-              },
-              "stage_name" => %{
-                "type" => "string",
-                "description" => "Updated stage name"
-              },
-              "stage_type" => %{
-                "type" => "string",
-                "description" => "Updated stage type"
-              },
-              "tool_name" => %{
-                "type" => "string",
-                "description" => "Updated tool name"
-              },
-              "tool_params" => %{
-                "type" => "object",
-                "description" => "Updated tool parameters"
-              },
-              "tool_result" => %{
-                "type" => "object",
-                "description" => "Result from tool execution"
-              },
-              "ai_reasoning" => %{
-                "type" => "string",
-                "description" => "Updated AI reasoning"
-              },
-              "status" => %{
-                "type" => "string",
-                "description" => "Updated status"
-              },
-              "started_at" => %{
-                "type" => "string",
-                "format" => "date-time",
-                "description" => "When the stage started"
-              },
-              "completed_at" => %{
-                "type" => "string",
-                "format" => "date-time",
-                "description" => "When the stage completed"
-              },
-              "error_message" => %{
-                "type" => "string",
-                "description" => "Error message if stage failed"
-              }
-            },
-            "required" => ["stage_id"]
-          }
-        }
-      },
-      %{
-        "type" => "function",
-        "function" => %{
-          "name" => "create_assistant_message",
-          "description" => "Create an assistant message in a chat session",
-          "parameters" => %{
-            "type" => "object",
-            "properties" => %{
               "session_id" => %{
                 "type" => "string",
-                "description" => "The ID of the chat session"
-              },
-              "message" => %{
-                "type" => "string",
-                "description" => "The message content from the assistant"
+                "description" => "Filter by specific chat session"
               }
             },
-            "required" => ["session_id", "message"]
+            "required" => ["query"]
           }
         }
       },
       %{
         "type" => "function",
         "function" => %{
-          "name" => "create_system_message",
-          "description" => "Create a system message in a chat session",
+          "name" => "find_relevant_context",
+          "description" => "Find relevant context by searching both tasks and chat messages",
           "parameters" => %{
             "type" => "object",
             "properties" => %{
-              "session_id" => %{
+              "query" => %{
                 "type" => "string",
-                "description" => "The ID of the chat session"
+                "description" => "The search query to find relevant context"
               },
-              "message" => %{
-                "type" => "string",
-                "description" => "The system message content"
+              "task_limit" => %{
+                "type" => "integer",
+                "description" => "Maximum number of task results (default: 5)"
+              },
+              "message_limit" => %{
+                "type" => "integer",
+                "description" => "Maximum number of message results (default: 5)"
+              },
+              "threshold" => %{
+                "type" => "number",
+                "description" => "Similarity threshold (default: 0.7)"
               }
             },
-            "required" => ["session_id", "message"]
+            "required" => ["query"]
           }
         }
       }
@@ -296,133 +134,55 @@ defmodule Finpilot.Workers.ToolExecutor do
 
   # Private functions for tool implementations
   
-   defp create_assistant_message(args, user_id) do
-    session_id = Map.get(args, "session_id")
-    message = Map.get(args, "message")
+  defp search_tasks(args, user_id) do
+    query = Map.get(args, "query")
+    opts = build_search_opts(args, [:limit, :threshold, :include_completed])
 
-    case ChatMessages.create_assistant_message(session_id, user_id, message) do
-      {:ok, chat_message} ->
-        Logger.info("[ToolExecutor] Successfully created assistant message: #{chat_message.id}")
-        {:ok, chat_message}
-      {:error, changeset} ->
-        Logger.error("[ToolExecutor] Failed to create assistant message: #{inspect(changeset.errors)}")
-        {:error, "Failed to create assistant message: #{format_changeset_errors(changeset)}"}
+    case Memory.search_tasks(user_id, query, opts) do
+      {:ok, tasks} ->
+        Logger.info("[ToolExecutor] Successfully searched tasks: #{length(tasks)} results")
+        {:ok, tasks}
+      {:error, reason} ->
+        Logger.error("[ToolExecutor] Failed to search tasks: #{reason}")
+        {:error, "Failed to search tasks: #{reason}"}
     end
   end
 
-  defp create_system_message(args, user_id) do
-    session_id = Map.get(args, "session_id")
-    message = Map.get(args, "message")
+  defp search_chat_messages(args, user_id) do
+    query = Map.get(args, "query")
+    opts = build_search_opts(args, [:limit, :threshold, :role_filter, :session_id])
 
-    case ChatMessages.create_system_message(session_id, user_id, message) do
-      {:ok, chat_message} ->
-        Logger.info("[ToolExecutor] Successfully created system message: #{chat_message.id}")
-        {:ok, chat_message}
-      {:error, changeset} ->
-        Logger.error("[ToolExecutor] Failed to create system message: #{inspect(changeset.errors)}")
-        {:error, "Failed to create system message: #{format_changeset_errors(changeset)}"}
+    case Memory.search_chat_messages(user_id, query, opts) do
+      {:ok, messages} ->
+        Logger.info("[ToolExecutor] Successfully searched chat messages: #{length(messages)} results")
+        {:ok, messages}
+      {:error, reason} ->
+        Logger.error("[ToolExecutor] Failed to search chat messages: #{reason}")
+        {:error, "Failed to search chat messages: #{reason}"}
     end
   end
 
-  defp create_task(args, user_id) do
-    task_attrs = args
-    |> Map.put("user_id", user_id)
-    |> Map.put("is_done", Map.get(args, "is_done", false))
+  defp find_relevant_context(args, user_id) do
+    query = Map.get(args, "query")
+    opts = build_search_opts(args, [:task_limit, :message_limit, :threshold])
 
-    case Tasks.create_task(task_attrs) do
-      {:ok, task} ->
-        Logger.info("[ToolExecutor] Successfully created task: #{task.id}")
-        {:ok, task}
-      {:error, changeset} ->
-        Logger.error("[ToolExecutor] Failed to create task: #{inspect(changeset.errors)}")
-        {:error, "Failed to create task: #{format_changeset_errors(changeset)}"}
+    case Memory.find_relevant_context(user_id, query, opts) do
+      {:ok, context} ->
+        Logger.info("[ToolExecutor] Successfully found relevant context: #{length(context.tasks)} tasks, #{length(context.messages)} messages")
+        {:ok, context}
+      {:error, reason} ->
+        Logger.error("[ToolExecutor] Failed to find relevant context: #{reason}")
+        {:error, "Failed to find relevant context: #{reason}"}
     end
   end
 
-  defp edit_task(args, user_id) do
-    task_id = Map.get(args, "task_id")
-
-    case Tasks.get_task(task_id) do
-      {:ok, task} ->
-        # Verify user owns the task
-        if task.user_id == user_id do
-          update_attrs = Map.delete(args, "task_id")
-
-          case Tasks.update_task(task, update_attrs) do
-            {:ok, updated_task} ->
-              Logger.info("[ToolExecutor] Successfully updated task: #{task_id}")
-              {:ok, updated_task}
-            {:error, changeset} ->
-              Logger.error("[ToolExecutor] Failed to update task: #{inspect(changeset.errors)}")
-              {:error, "Failed to update task: #{format_changeset_errors(changeset)}"}
-          end
-        else
-          {:error, "Task not found or access denied"}
-        end
-      {:error, :not_found} ->
-        {:error, "Task not found"}
-    end
-  end
-
-  defp create_task_stage(args, user_id) do
-    task_id = Map.get(args, "task_id")
-
-    # Verify user owns the task
-    case Tasks.get_task(task_id) do
-      {:ok, task} when task.user_id == user_id ->
-        stage_attrs = args
-        |> Map.put("started_at", Map.get(args, "started_at", DateTime.utc_now()))
-        |> Map.put("completed_at", Map.get(args, "completed_at", DateTime.utc_now()))
-        |> Map.put("error_message", Map.get(args, "error_message", ""))
-
-        case Tasks.create_task_stage(stage_attrs) do
-          {:ok, stage} ->
-            Logger.info("[ToolExecutor] Successfully created task stage: #{stage.id}")
-            {:ok, stage}
-          {:error, changeset} ->
-            Logger.error("[ToolExecutor] Failed to create task stage: #{inspect(changeset.errors)}")
-            {:error, "Failed to create task stage: #{format_changeset_errors(changeset)}"}
-        end
-      {:ok, _task} ->
-        {:error, "Task not found or access denied"}
-      {:error, :not_found} ->
-        {:error, "Task not found"}
-    end
-  end
-
-  defp edit_task_stage(args, user_id) do
-    stage_id = Map.get(args, "stage_id")
-
-    try do
-      stage = Tasks.get_task_stage!(stage_id)
-
-      # Get the associated task to verify user ownership
-      case Tasks.get_task(stage.task_id) do
-        {:ok, task} when task.user_id == user_id ->
-          update_attrs = Map.delete(args, "stage_id")
-
-          case Tasks.update_task_stage(stage, update_attrs) do
-            {:ok, updated_stage} ->
-              Logger.info("[ToolExecutor] Successfully updated task stage: #{stage_id}")
-              {:ok, updated_stage}
-            {:error, changeset} ->
-              Logger.error("[ToolExecutor] Failed to update task stage: #{inspect(changeset.errors)}")
-              {:error, "Failed to update task stage: #{format_changeset_errors(changeset)}"}
-          end
-        {:ok, _task} ->
-          {:error, "Task stage not found or access denied"}
-        {:error, :not_found} ->
-          {:error, "Associated task not found"}
+  defp build_search_opts(args, allowed_keys) do
+    allowed_keys
+    |> Enum.reduce([], fn key, acc ->
+      case Map.get(args, Atom.to_string(key)) do
+        nil -> acc
+        value -> [{key, value} | acc]
       end
-    rescue
-      Ecto.NoResultsError ->
-        {:error, "Task stage not found"}
-    end
-  end
-
-  defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
-    |> Enum.join(", ")
+    end)
   end
 end
