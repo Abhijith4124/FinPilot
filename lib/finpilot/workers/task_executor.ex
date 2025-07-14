@@ -117,9 +117,7 @@ defmodule Finpilot.Workers.TaskExecutor do
   # Call AI with task execution capabilities
   defp call_ai_for_task(context) do
     prompt = build_task_prompt(context)
-    Logger.debug("[TaskExecutor] Generated user prompt: #{prompt}")
     system_prompt = get_task_system_prompt()
-    Logger.debug("[TaskExecutor] System prompt: #{system_prompt}")
     tool_definitions = get_task_tool_definitions() ++ ToolExecutor.get_tool_definitions()
     tools = OpenRouter.format_tools(tool_definitions)
     messages = [OpenRouter.user_message(prompt)]
@@ -365,6 +363,8 @@ defmodule Finpilot.Workers.TaskExecutor do
     ANTI-LOOP PROTECTION:
     - Detect repeated actions and end with error if stuck.
     - Vary approaches if previous tool_results indicate failure.
+    - There might be some cases where the data is actually 0 but the model thinks it is not. Do not try to execute the same thing again.
+    - Do not try the same type of task for data fetching for more than 5 times.
 
     Remember: Be flexible, use multiple tools per response when possible, and actively execute next_instructions.
     """
