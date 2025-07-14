@@ -71,7 +71,15 @@ defmodule Finpilot.Workers.TaskExecutor do
             {:ok, :halted}
           else
             {:ok, latest_task} = Tasks.get_task(task.id)
-            serialized_results = Enum.map(results, fn 
+            serialized_results = Enum.map(results, fn
+              {:ok, %Finpilot.Tasks.Task{} = task} ->
+                %{"status" => "ok", "result" => %{
+                  "id" => task.id,
+                  "current_summary" => task.current_summary,
+                  "next_instruction" => task.next_instruction,
+                  "is_done" => task.is_done,
+                  "context" => task.context
+                }}
               {:ok, res} -> %{"status" => "ok", "result" => res}
               {:error, reason} -> %{"status" => "error", "reason" => reason}
             end)
@@ -101,7 +109,8 @@ defmodule Finpilot.Workers.TaskExecutor do
       timestamp: DateTime.utc_now(),
       process_id: self(),
       node: Node.self(),
-      user_id: task.user_id
+      user_id: task.user_id,
+      session_id: task.session_id
     }
   end
 

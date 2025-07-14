@@ -221,7 +221,23 @@ defmodule FinpilotWeb.LandingPageLive.Index do
             {nil, put_flash(socket, :error, "Failed to create chat session")}
         end
       existing_session ->
-        {existing_session, socket}
+        # Verify the existing session belongs to the current user
+        if existing_session.user_id == user_id do
+          {existing_session, socket}
+        else
+          # Session doesn't belong to current user, create a new one
+          case ChatSessions.create_user_chat_session(user_id, "New Chat") do
+            {:ok, chat_session} ->
+              messages = ChatMessages.list_messages_by_session(chat_session.id)
+              Phoenix.PubSub.subscribe(Finpilot.PubSub, "chat_session:#{chat_session.id}")
+              socket = socket
+              |> assign(chat_session: chat_session, messages: messages, subscribed_session_id: chat_session.id)
+              |> push_patch(to: "/chat/#{chat_session.id}")
+              {chat_session, socket}
+            {:error, _changeset} ->
+              {nil, put_flash(socket, :error, "Failed to create chat session")}
+          end
+        end
     end
   end
 end

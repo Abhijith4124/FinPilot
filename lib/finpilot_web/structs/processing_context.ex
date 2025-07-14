@@ -3,6 +3,7 @@ defmodule FinpilotWeb.Structs.ProcessingContext do
     :text,
     :user_info,
     :user_id,
+    :session_id,
     :source,
     :metadata,
     :instructions,

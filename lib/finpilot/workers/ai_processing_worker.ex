@@ -60,6 +60,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   defp build_context(text, user_id, source, args) do
     instructions = get_active_instructions(user_id)
     running_tasks = get_running_tasks(user_id)
+    session_id = args["session_id"]
 
     user_info = Finpilot.Accounts.get_user!(user_id)
     |> Map.take([:id, :name, :username, :email, :picture, :verified, :gmail_read, :gmail_write, :calendar_read, :calendar_write, :hubspot])
@@ -68,8 +69,9 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       text: text,
       user_info: user_info,
       user_id: user_id,
+      session_id: session_id,
       source: source,
-      metadata: Map.drop(args, ["text", "user_id", "source"]),
+      metadata: Map.drop(args, ["text", "user_id", "source", "session_id"]),
       instructions: instructions,
       running_tasks: running_tasks,
       history: args["history"] || [],
@@ -208,19 +210,20 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   # Get system prompt for AI
   defp get_system_prompt do
     """
-    You are FinPilot, an intelligent AI assistant that analyzes incoming text and orchestrates operations. You can execute tool calls directly or create tasks for long-running processes.
+    You are FinPilot, an intelligent AI assistant that analyzes incoming text and orchestrates operations. You are designed to handle simple operations directly and delegate complex multi-step operations to tasks.
 
     CRITICAL RULES:
     1. You MUST ONLY respond using tool calls. Never provide text responses or explanations outside of tool calls.
     2. For general conversation or simple questions, use the `create_assistant_message` tool to respond directly.
-    3. ALWAYS use direct tool calls for simple, immediate operations like retrieving information (e.g., get_user_info, get_chat_messages). Do NOT create tasks for these.
-    4. Create tasks STRICTLY ONLY for processes that require waiting for external events, such as waiting for an email reply, calendar event changes, or a specific date/time. Do NOT create tasks for any other reasons, including long-running computations or multi-step processes that don't involve waiting; use sequential tool calls instead.
+    3. You can ONLY execute these tools directly: create_assistant_message, create_system_message, create_instruction, update_instruction, delete_instruction.
+    4. For ALL OTHER operations (get_user_info, get_emails, search_emails, get_chat_messages, etc.), you MUST create a task that will handle the operation and provide results back to the user.
+    5. Create tasks for ANY operation that involves data retrieval, external API calls, or multi-step processes.
 
     Your responsibilities:
     1. Analyze incoming text from various sources (chat, email, etc.).
-    2. Execute tools directly for immediate actions like retrieving information.
-    3. Create tasks for complex, multi-step, or long-running operations.
-    4. Communicate with the user via the `create_assistant_message` tool.
+    2. Respond to users directly for simple conversation.
+    3. Create and manage user instructions.
+    4. Create tasks for all data operations and complex workflows.
 
     CONTEXT SECTIONS:
 
@@ -242,31 +245,33 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     - Only create new tasks if they don't overlap with existing ones
 
     TASK CREATION GUIDELINES:
-    - Create tasks ONLY for operations that require waiting for external events (e.g., email replies, scheduled triggers, calendar changes).
-    - NEVER create tasks for simple queries, permission checks, immediate data retrieval, multi-step processes without waiting, or any other cases. ALWAYS execute these directly with tools or sequential tool calls.
+    - Create tasks for ANY operation that requires data retrieval (emails, user info, chat messages, etc.).
+    - Create tasks for multi-step processes, calculations, or operations that need to process results.
+    - Tasks will handle the complexity and provide results back to the user automatically.
+    - When creating tasks, be specific about what the task should accomplish and how it should respond to the user.
 
     AVAILABLE TOOLS:
     You can use the following tools directly. For long-running processes, you can create a task that uses these tools.
-    #{ToolExecutor.format_tool_definitions_for_prompt()}
+    #{format_all_tool_definitions_for_prompt()}
 
     TOOL USAGE RULES:
     1. ALWAYS use tool calls - never respond with plain text
-    2. Use assistant_message tool ONLY for immediate user communication
-    3. Use create_task tool ONLY for operations that require waiting for external events
-    4. If you need to retrieve data, include it in a task if it's part of a larger process
-    5. If you need to perform calculations, incorporate into tasks for complex scenarios
-    6. If you need to make API calls, use tasks for calls that may need follow-up or waiting
+    2. Use create_assistant_message ONLY for simple conversation and immediate responses
+    3. Use create_system_message for internal logging and system communications
+    4. Use create_instruction, update_instruction, delete_instruction for managing user automation rules
+    5. Use create_task for ALL data operations (emails, user info, chat messages, etc.)
+    6. Use create_task for ANY multi-step process or operation that needs to process results
     7. Be proactive in identifying ALL actionable items from incoming text
     8. Consider context from running tasks and user instructions
-    9. If user requests invalid operations, use assistant_message to explain limitations
+    9. If user requests invalid operations, use create_assistant_message to explain limitations
 
     DECISION FLOW:
     1. Analyze the incoming text and determine the user's intent.
-    2. If the request can be handled by a direct tool call (e.g., `get_user_info`), execute it.
-    - Specifically, for any questions about permissions, access rights, or whether you have permission to do something (like accessing Gmail), ALWAYS call get_user_info first to check the actual permissions, then use create_assistant_message to respond based on the result.
-    3. If the request requires waiting for an external event (like email reply or calendar change), create a task.
-    4. If the request is a simple conversation without needing data retrieval or checks, use `create_assistant_message`.
-    5. If you need to both respond and execute a tool or create a task, use `create_assistant_message` first.
+    2. If it's simple conversation without data needs, use `create_assistant_message`.
+    3. If it involves managing instructions, use the appropriate instruction tools.
+    4. For ANY data retrieval or complex operation, create a task with specific instructions.
+    5. When creating tasks, include clear instructions on how the task should respond to the user.
+    6. Tasks will automatically handle multi-step operations and provide results back to users.
 
     INSTRUCTION HANDLING:
     - Analyze incoming text for potential instructions, especially persistent or long-running ones (e.g., "Whenever I get an email, do X")
@@ -281,7 +286,14 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     - When a tool requires a `user_id` or `session_id`, you should be able to infer it from the context provided in the prompt.
     - Do not ask for information that is already available in the context.
 
-    Remember: You are an orchestrator. You can execute tools directly or create tasks for more complex workflows.
+    TASK DELEGATION STRATEGY:
+    - You are a simple orchestrator that delegates complex work to tasks
+    - Tasks have access to all the tools you see in the available tools list
+    - Tasks can execute multiple tools, process results, and make decisions
+    - Tasks will automatically communicate results back to users
+    - Your job is to create well-defined tasks with clear objectives
+
+    Remember: You are a simple orchestrator. Delegate complex operations to tasks and handle only basic communication and instruction management directly.
     """
   end
 
@@ -307,6 +319,9 @@ defmodule Finpilot.Workers.AIProcessingWorker do
 
       RUNNING TASKS:
       #{tasks_text}
+
+      RAW_CONTEXT:
+      #{inspect(context)}
 
       Please analyze this incoming text and respond appropriately using tool calls for actions or direct messages for communication.
       """
@@ -343,7 +358,8 @@ defmodule Finpilot.Workers.AIProcessingWorker do
 
   # Get tool definitions for AI processing
   def get_tool_definitions do
-    [
+    # Only include tools that AI processing worker can execute directly
+    ai_processing_tools = [
       %{
         "type" => "function",
         "function" => %{
@@ -369,6 +385,10 @@ defmodule Finpilot.Workers.AIProcessingWorker do
                 "type" => "object",
                 "description" => "Additional context and metadata for the task",
                 "default" => %{}
+              },
+              "session_id" => %{
+                "type" => "string",
+                "description" => "Optional chat session ID to associate the task with"
               }
             },
             "required" => ["task_instruction", "next_instruction"]
@@ -509,6 +529,57 @@ defmodule Finpilot.Workers.AIProcessingWorker do
         }
       }
     ]
+
+    # Return only AI processing tools - tasks will handle ToolExecutor tools
+    ai_processing_tools
+  end
+
+  # Format all tool definitions for the AI prompt
+  defp format_all_tool_definitions_for_prompt do
+    # Get the ToolExecutor formatted definitions for task reference
+    tool_executor_definitions = ToolExecutor.format_tool_definitions_for_prompt()
+
+    # Add AI processing specific tools
+    ai_processing_definitions = """
+
+    TOOLS YOU CAN EXECUTE DIRECTLY:
+
+    5. create_assistant_message
+       - Description: Send a message to the user as the AI assistant
+       - Required: message (string), session_id (string)
+       - Returns: Message ID and content
+
+    6. create_system_message
+       - Description: Create a system message for logging or internal communication
+       - Required: message (string)
+       - Optional: session_id (string)
+       - Returns: Message ID and content
+
+    7. create_instruction
+       - Description: Create a new persistent instruction for the user
+       - Required: name (string), description (string), trigger_conditions (object), actions (object), ai_prompt (string)
+       - Returns: Instruction ID
+
+    8. update_instruction
+       - Description: Update an existing instruction
+       - Required: id (string)
+       - Optional: name, description, trigger_conditions, actions, ai_prompt, is_active
+       - Returns: Instruction ID
+
+    9. delete_instruction
+       - Description: Delete an existing instruction
+       - Required: id (string)
+       - Returns: Instruction ID
+
+    10. create_task
+        - Description: Create a new task that can use any of the tools listed above in "Available Tools" section
+        - Required: task_instruction (string), next_instruction (string)
+        - Optional: current_summary (string), context (object), session_id (string)
+        - Returns: Task ID, job ID, current summary, and confirmation message
+        - Note: Tasks can execute multiple tools, process results, and communicate with users automatically
+    """
+
+    "TOOLS AVAILABLE FOR TASKS TO USE:\n\n" <> tool_executor_definitions <> "\n" <> ai_processing_definitions
   end
 
   defp execute_tool("create_instruction", args, user_id, _context) do
@@ -590,9 +661,12 @@ end
     end
 
     # Use the provided context or extract session_id from the original context
-    task_context = args["context"] || %{
-      "session_id" => Map.get(context.metadata || %{}, "session_id")
-    }
+    # Priority: explicit session_id parameter > context.session_id > existing context
+    session_id = args["session_id"] || context.session_id
+    
+    task_context = args["context"] || %{}
+    # Ensure session_id is included in context if provided
+    task_context = if session_id, do: Map.put(task_context, "session_id", session_id), else: task_context
 
     task_params = %{
       user_id: user_id,
@@ -600,6 +674,7 @@ end
       current_summary: current_summary,
       next_instruction: args["next_instruction"] || "",
       context: task_context,
+      session_id: session_id,
       is_done: false
     }
 
@@ -668,8 +743,9 @@ end
     end
   end
 
-  defp execute_tool(tool_name, _args, user_id, _context) do
+  defp execute_tool(tool_name, args, user_id, _context) do
     Logger.error("[AIProcessingWorker] Unknown tool: #{tool_name} for user #{user_id}")
+    create_error_system_message(user_id, "Unknown tool: #{tool_name}", args["session_id"])
     {:error, "Unknown tool: #{tool_name}"}
   end
 

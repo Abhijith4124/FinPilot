@@ -284,4 +284,65 @@ defmodule Finpilot.Gmail do
     )
     |> Repo.all()
   end
+
+  @doc """
+  Gets emails for a user with pagination and optional filtering.
+
+  ## Examples
+
+      iex> list_user_emails("user_123", limit: 20, offset: 0)
+      [%Email{}, ...]
+
+      iex> list_user_emails("user_123", limit: 10, sender: "john@example.com")
+      [%Email{}, ...]
+
+  """
+  def list_user_emails(user_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 50)
+    offset = Keyword.get(opts, :offset, 0)
+    sender = Keyword.get(opts, :sender)
+    subject_contains = Keyword.get(opts, :subject_contains)
+    content_contains = Keyword.get(opts, :content_contains)
+    from_date = Keyword.get(opts, :from_date)
+    to_date = Keyword.get(opts, :to_date)
+    labels = Keyword.get(opts, :labels)
+
+    query = from(e in Email,
+      where: e.user_id == ^user_id,
+      order_by: [desc: e.received_at],
+      limit: ^limit,
+      offset: ^offset
+    )
+
+    query = if sender, do: where(query, [e], e.sender == ^sender), else: query
+    query = if subject_contains, do: where(query, [e], ilike(e.subject, ^"%#{subject_contains}%")), else: query
+    query = if content_contains, do: where(query, [e], ilike(e.content, ^"%#{content_contains}%")), else: query
+    query = if from_date, do: where(query, [e], e.received_at >= ^from_date), else: query
+    query = if to_date, do: where(query, [e], e.received_at <= ^to_date), else: query
+    query = if labels, do: where(query, [e], ilike(e.labels, ^"%#{labels}%")), else: query
+
+    Repo.all(query)
+  end
+
+  @doc """
+  Search emails using vector similarity with a text query.
+  This function generates an embedding for the query text and finds similar emails.
+
+  ## Examples
+
+      iex> search_emails_by_content("user_123", "meeting tomorrow", limit: 5)
+      [%{email: %Email{}, similarity: 0.85}, ...]
+
+  """
+  def search_emails_by_content(user_id, query_text, opts \\ []) do
+    alias Finpilot.Gmail.EmailEmbeddings
+    alias Finpilot.Services.OpenAI
+
+    case OpenAI.generate_embeddings_large([query_text]) do
+      {:ok, [embedding]} ->
+        EmailEmbeddings.semantic_search(embedding, user_id, opts)
+      {:error, reason} ->
+        {:error, "Failed to generate embedding: #{reason}"}
+    end
+  end
 end

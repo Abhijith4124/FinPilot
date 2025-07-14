@@ -472,12 +472,12 @@ defmodule Finpilot.Services.Gmail do
     results = Enum.map(messages, fn message ->
       Logger.debug("Processing message #{message.id}")
       result = process_single_message(user, message.id)
-      
+
       case result do
         {:ok, _} -> Logger.debug("Successfully processed message #{message.id}")
         {:error, reason} -> Logger.warning("Failed to process message #{message.id}: #{inspect(reason)}")
       end
-      
+
       result
     end)
 
@@ -485,7 +485,7 @@ defmodule Finpilot.Services.Gmail do
       {:ok, _}, {successes, failures} -> {successes + 1, failures}
       {:error, _}, {successes, failures} -> {successes, failures + 1}
     end)
-    
+
     Logger.info("Batch processing complete for user #{user.id}: #{successes} successes, #{failures} failures")
     {successes, failures}
   end
@@ -498,7 +498,7 @@ defmodule Finpilot.Services.Gmail do
           nil ->
             # Create new email record
             email_attrs = extract_email_attributes(gmail_message, user.id)
-            
+
             # Check if content extraction failed and try attachment retrieval
             email_attrs = cond do
                String.contains?(email_attrs.content, "[Email content stored as attachment") or
@@ -507,7 +507,7 @@ defmodule Finpilot.Services.Gmail do
                 String.contains?(email_attrs.content, "[Multipart content stored as attachment") or
                 String.contains?(email_attrs.content, "content stored as attachment - attachmentId:") ->
                  Logger.info("Attempting to retrieve attachment content for message #{message_id}")
-                 
+
                  # Extract attachment ID from the content message
                  case Regex.run(~r/attachmentId: ([^\]]+)/, email_attrs.content) do
                    [_, attachment_id] ->
@@ -522,16 +522,16 @@ defmodule Finpilot.Services.Gmail do
                      Logger.warning("Could not extract attachment ID from content message")
                      email_attrs
                  end
-               
+
                true ->
                  email_attrs
              end
-            
+
             # Add debug info for content issues
             if String.trim(email_attrs.content) == "[No content available]" do
               Logger.warning("Email #{message_id} has no extractable content. Subject: #{email_attrs.subject}")
             end
-            
+
             case Gmail.create_email(email_attrs) do
               {:ok, email} ->
                 Logger.debug("Created email #{email.id} for message #{message_id}")
@@ -557,7 +557,7 @@ defmodule Finpilot.Services.Gmail do
   defp extract_email_attributes(gmail_message, user_id) do
     headers = get_headers_map(gmail_message.payload.headers || [])
     content = extract_email_content(gmail_message.payload)
-    
+
     # Ensure content is not empty as it's required by the schema
     final_content = if String.trim(content) == "" do
       "[No content available]"
@@ -607,7 +607,7 @@ defmodule Finpilot.Services.Gmail do
 
   defp extract_email_content(payload) do
     Logger.debug("Extracting email content from payload structure: #{inspect(Map.keys(payload))}")
-    
+
     # Log payload body information for debugging
     if Map.has_key?(payload, :body) && is_map(payload.body) do
       body = payload.body
@@ -616,7 +616,7 @@ defmodule Finpilot.Services.Gmail do
       attachment_id = Map.get(body, :attachmentId)
       Logger.debug("Payload body info - has data: #{has_data}, size: #{size}, attachmentId: #{attachment_id}")
     end
-    
+
     # Log parts information
     if Map.has_key?(payload, :parts) && is_list(payload.parts) do
       Logger.debug("Payload has #{length(payload.parts)} parts")
@@ -627,7 +627,7 @@ defmodule Finpilot.Services.Gmail do
         Logger.debug("Part #{index}: mimeType=#{mime_type}, has_data=#{has_data}, size=#{size}")
       end)
     end
-    
+
     content = cond do
       Map.has_key?(payload, :body) && is_map(payload.body) && Map.has_key?(payload.body, :data) && is_binary(payload.body.data) && payload.body.data != "" ->
         Logger.debug("Extracting content from main body data")
@@ -641,9 +641,9 @@ defmodule Finpilot.Services.Gmail do
         Logger.debug("No body data or parts found")
         ""
     end
-    
+
     Logger.debug("Extracted content length: #{String.length(content || "")}")
-    
+
     # If still no content, try to extract from snippet or other fields
     if String.trim(content) == "" do
       Logger.debug("Content is empty, trying fallback extraction")
@@ -659,16 +659,16 @@ defmodule Finpilot.Services.Gmail do
 
   defp extract_fallback_content(payload) do
     Logger.debug("Attempting fallback content extraction")
-    
+
     # Try to get content from snippet or other available fields
     cond do
       Map.has_key?(payload, :snippet) && is_binary(payload.snippet) && payload.snippet != "" ->
         Logger.debug("Using snippet as fallback content (length: #{String.length(payload.snippet)})")
         payload.snippet
-        
+
       Map.has_key?(payload, :body) && is_map(payload.body) && Map.has_key?(payload.body, :size) && is_integer(payload.body.size) && payload.body.size > 0 ->
         Logger.warning("Email content not accessible - body size: #{payload.body.size} bytes, attachmentId: #{payload.body.attachmentId || "none"}")
-        
+
         # Check if this might be an attachment that needs separate retrieval
         if Map.has_key?(payload.body, :attachmentId) && is_binary(payload.body.attachmentId) do
           Logger.info("Email content appears to be stored as attachment with ID: #{payload.body.attachmentId}")
@@ -676,7 +676,7 @@ defmodule Finpilot.Services.Gmail do
         else
           "[Email content not accessible - size: #{payload.body.size} bytes]"
         end
-        
+
       true ->
         Logger.warning("Email structure not recognized - no snippet, body data, or parts available. Payload keys: #{inspect(Map.keys(payload))}")
         "[Email structure not recognized]"
@@ -689,25 +689,25 @@ defmodule Finpilot.Services.Gmail do
 
   defp extract_content_from_parts(parts) when is_list(parts) do
     Logger.debug("Trying to extract content from #{length(parts)} parts")
-    
+
     # Try multiple strategies to extract content
     content = try_text_plain(parts) ||
               try_text_html(parts) ||
               try_nested_parts(parts) ||
               try_any_text_content(parts) ||
               ""
-    
+
     Logger.debug("Content extraction from parts result: #{if String.trim(content) == "", do: "empty", else: "#{String.length(content)} characters"}")
     content
   end
 
   defp extract_content_from_parts(_), do: ""
-  
+
   defp try_text_plain(parts) do
     Logger.debug("Trying to extract text/plain content")
-    
+
     result = parts
-    |> Enum.find(fn part -> 
+    |> Enum.find(fn part ->
       Map.get(part, :mimeType) == "text/plain"
     end)
     |> case do
@@ -728,7 +728,7 @@ defmodule Finpilot.Services.Gmail do
         Logger.debug("Found text/plain part but unexpected structure: #{inspect(part)}")
         nil
     end
-    
+
     if result, do: Logger.debug("text/plain extraction successful (#{String.length(result)} chars)"), else: Logger.debug("text/plain extraction failed")
     result
   rescue
@@ -736,12 +736,12 @@ defmodule Finpilot.Services.Gmail do
       Logger.warning("Error in text/plain extraction: #{inspect(error)}")
       nil
   end
-  
+
   defp try_text_html(parts) do
     Logger.debug("Trying to extract text/html content")
-    
+
     result = parts
-    |> Enum.find(fn part -> 
+    |> Enum.find(fn part ->
       Map.get(part, :mimeType) == "text/html"
     end)
     |> case do
@@ -762,7 +762,7 @@ defmodule Finpilot.Services.Gmail do
         Logger.debug("Found text/html part but unexpected structure: #{inspect(part)}")
         nil
     end
-    
+
     if result, do: Logger.debug("text/html extraction successful (#{String.length(result)} chars)"), else: Logger.debug("text/html extraction failed")
     result
   rescue
@@ -770,31 +770,31 @@ defmodule Finpilot.Services.Gmail do
       Logger.warning("Error in text/html extraction: #{inspect(error)}")
       nil
   end
-  
+
   defp try_nested_parts(parts) do
     Logger.debug("Trying to extract content from nested parts")
-    
+
     # Try to find multipart structures and recursively extract content
     result = parts
     |> Enum.find_value(fn part ->
       mime_type = Map.get(part, :mimeType, "")
       nested_parts = Map.get(part, :parts, [])
       body = Map.get(part, :body, %{})
-      
+
       cond do
         is_list(nested_parts) && length(nested_parts) > 0 ->
           Logger.debug("Found nested parts in #{mime_type} (#{length(nested_parts)} parts)")
           extract_content_from_parts(nested_parts)
-        
+
         String.starts_with?(mime_type, "multipart/") && is_map(body) && Map.has_key?(body, :attachmentId) && is_binary(body.attachmentId) ->
           Logger.debug("Found multipart with attachment ID: #{body.attachmentId}")
           "[Multipart content stored as attachment - attachmentId: #{body.attachmentId}]"
-        
+
         true ->
           nil
       end
     end)
-    
+
     if result, do: Logger.debug("Nested parts extraction successful"), else: Logger.debug("No nested parts found")
     result
   rescue
@@ -802,30 +802,30 @@ defmodule Finpilot.Services.Gmail do
       Logger.warning("Error in nested parts extraction: #{inspect(error)}")
       nil
   end
-  
+
   defp try_any_text_content(parts) do
     Logger.debug("Trying to extract any text content from parts")
-    
+
     # Try any part that might contain text content
     result = parts
-    |> Enum.find_value(fn part -> 
+    |> Enum.find_value(fn part ->
       mime_type = Map.get(part, :mimeType, "")
       body = Map.get(part, :body, %{})
-      
+
       cond do
         String.starts_with?(mime_type, "text/") && is_map(body) && Map.has_key?(body, :data) && is_binary(body.data) && body.data != "" ->
           Logger.debug("Found text part with data: #{mime_type}")
           decode_base64_content(body.data)
-        
+
         String.starts_with?(mime_type, "text/") && is_map(body) && Map.has_key?(body, :attachmentId) && is_binary(body.attachmentId) ->
           Logger.debug("Found text part with attachment ID: #{body.attachmentId} (#{mime_type})")
           "[#{mime_type} content stored as attachment - attachmentId: #{body.attachmentId}]"
-        
+
         true ->
           nil
       end
     end)
-    
+
     if result, do: Logger.debug("Any text content extraction successful"), else: Logger.debug("No text content found")
     result
   rescue
@@ -836,7 +836,7 @@ defmodule Finpilot.Services.Gmail do
 
   defp decode_base64_content(data) when is_binary(data) do
     Logger.debug("Decoding base64 content (#{String.length(data)} chars)")
-    
+
     # Try URL-safe base64 decoding first (Gmail uses this), then fallback to standard base64
     result = try do
       Base.url_decode64!(data, padding: false)
@@ -847,7 +847,7 @@ defmodule Finpilot.Services.Gmail do
     end
     |> String.trim()
     |> strip_html_if_needed()
-    
+
     Logger.debug("Base64 decode successful (#{String.length(result)} chars after processing)")
     result
   rescue
@@ -861,10 +861,10 @@ defmodule Finpilot.Services.Gmail do
   # Function to retrieve attachment content for large emails
   defp get_attachment_content(user, message_id, attachment_id) do
     Logger.info("Attempting to retrieve attachment content for message #{message_id}, attachment #{attachment_id}")
-    
+
     with {:ok, conn} <- get_connection(user),
          {:ok, attachment} <- Users.gmail_users_messages_attachments_get(conn, "me", message_id, attachment_id) do
-      
+
       if attachment.data do
         Logger.debug("Successfully retrieved attachment data (#{String.length(attachment.data)} chars)")
         decode_base64_content(attachment.data)
@@ -914,7 +914,7 @@ defmodule Finpilot.Services.Gmail do
     |> String.replace("&#39;", "'")
     |> String.replace("&apos;", "'")
     |> String.replace("&nbsp;", " ")
-    |> String.replace(~r/&#(\d+);/, fn _, num -> 
+    |> String.replace(~r/&#(\d+);/, fn _, num ->
       case Integer.parse(num) do
         {code, ""} when code > 0 and code < 1114112 -> <<code::utf8>>
         _ -> "&##{num};"
@@ -1087,13 +1087,13 @@ defmodule Finpilot.Services.Gmail do
   # Private function to handle sync errors
   defp handle_sync_error(sync_status, error_message) do
     Logger.error("Gmail sync error for user #{sync_status.user_id}: #{error_message}")
-    
+
     {:ok, _} = Gmail.update_sync_status(sync_status, %{
       sync_status: "error",
       last_error_message: error_message,
       last_sync_at: DateTime.utc_now()
     })
-    
+
     {:error, error_message}
   end
 end
