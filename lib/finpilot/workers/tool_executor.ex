@@ -3,6 +3,7 @@ defmodule Finpilot.Workers.ToolExecutor do
   Handles execution of AI-selected tools.
   """
 
+  alias Finpilot.Accounts
   alias Finpilot.ChatMessages
   alias Finpilot.ChatSessions
 
@@ -35,7 +36,35 @@ defmodule Finpilot.Workers.ToolExecutor do
     end
   end
 
-  def execute_tool(tool_name, _args, _user_id) do
+  def execute_tool("get_user_info", args, current_user_id) do
+    requested_user_id = Map.get(args, "user_id")
+
+    if requested_user_id != current_user_id do
+      {:error, "Access denied: cannot access other users' information"}
+    else
+      case Accounts.get_user!(requested_user_id) do
+        user ->
+          safe_user = %{
+            "id" => user.id,
+            "name" => user.name,
+            "username" => user.username,
+            "email" => user.email,
+            "picture" => user.picture,
+            "verified" => user.verified,
+            "gmail_read" => user.gmail_read,
+            "gmail_write" => user.gmail_write,
+            "calendar_read" => user.calendar_read,
+            "calendar_write" => user.calendar_write,
+            "hubspot" => user.hubspot
+          }
+          {:ok, safe_user}
+      end
+    end
+  rescue
+    Ecto.NoResultsError -> {:error, "User not found"}
+  end
+
+def execute_tool(tool_name, _args, _user_id) do
     {:error, "Unknown tool: #{tool_name}"}
   end
 
@@ -56,6 +85,20 @@ defmodule Finpilot.Workers.ToolExecutor do
             "required" => ["session_id"]
           }
         }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "get_user_info",
+          "description" => "Retrieve non-sensitive information for the specified user (must be current user)",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "user_id" => %{"type" => "string", "description" => "The ID of the user (must match current user)"}
+            },
+            "required" => ["user_id"]
+          }
+        }
       }
     ]
   end
@@ -69,6 +112,11 @@ defmodule Finpilot.Workers.ToolExecutor do
        - Required: session_id (string)
        - Optional: limit (integer, 1-100, default: 50), offset (integer, default: 0)
        - Returns: List of messages with id, role, message, inserted_at, session_id, user_id
+
+    2. get_user_info
+       - Description: Retrieve non-sensitive information for the specified user (must be current user), you can check if the user has acess to certain permission using this tool
+       - Required: user_id (string)
+       - Returns: Map with id, name, username, email, picture, verified, gmail_read, gmail_write, calendar_read, calendar_write, hubspot
     """
   end
 end

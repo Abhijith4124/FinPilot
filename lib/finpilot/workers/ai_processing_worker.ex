@@ -61,8 +61,12 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     instructions = get_active_instructions(user_id)
     running_tasks = get_running_tasks(user_id)
 
+    user_info = Finpilot.Accounts.get_user!(user_id)
+    |> Map.take([:id, :name, :username, :email, :picture, :verified, :gmail_read, :gmail_write, :calendar_read, :calendar_write, :hubspot])
+
     %ProcessingContext{
       text: text,
+      user_info: user_info,
       user_id: user_id,
       source: source,
       metadata: Map.drop(args, ["text", "user_id", "source"]),
@@ -145,20 +149,25 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     final_messages = history_messages ++ [OpenRouter.user_message(prompt)]
 
     Logger.info("[AIProcessingWorker] Calling OpenRouter AI with model #{@default_model}")
-    tool_choice = if context.source == "chat", do: "required", else: "auto"
-    result = OpenRouter.call_ai(@default_model, final_messages,
+    result = case OpenRouter.call_ai(@default_model, final_messages,
       tools: tools,
-      tool_choice: tool_choice,
+      tool_choice: "required",
       system_prompt: get_system_prompt()
-    )
-
-    case result do
-      {:ok, :tool_call, _updated_messages, tool_calls} ->
+    ) do
+      {:ok, :tool_call, updated_messages, tool_calls} ->
         Logger.info("[AIProcessingWorker] AI call successful, received #{length(tool_calls)} tool calls")
+        {:ok, :tool_call, updated_messages, tool_calls}
+      {:ok, :message, updated_messages} ->
+        Logger.warning("[AIProcessingWorker] Unexpected message response when tool_choice is required, retrying with reminder")
+        reminder = OpenRouter.system_message("REMINDER: You MUST respond ONLY with tool calls. Use create_assistant_message for any text responses.")
+        retry_messages = updated_messages ++ [reminder]
+        OpenRouter.call_ai(@default_model, retry_messages, tools: tools, tool_choice: "required", system_prompt: get_system_prompt())
       {:error, reason} ->
         Logger.error("[AIProcessingWorker] AI call failed: #{reason}")
+        {:error, reason}
       other ->
         Logger.warning("[AIProcessingWorker] Unexpected AI response: #{inspect(other)}")
+        {:error, "Unexpected AI response"}
     end
 
     result
@@ -199,20 +208,19 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   # Get system prompt for AI
   defp get_system_prompt do
     """
-    You are FinPilot, an intelligent AI assistant that analyzes incoming text and creates tasks for operations that require tool execution.
+    You are FinPilot, an intelligent AI assistant that analyzes incoming text and orchestrates operations. You can execute tool calls directly or create tasks for long-running processes.
 
     CRITICAL RULES:
     1. You MUST ONLY respond using tool calls. Never provide text responses or explanations outside of tool calls.
-    2. For general conversation, questions, or responses that do not require any tool execution or data processing, use ONLY the create_assistant_message tool to respond directly to the user.
-    3. Create tasks ONLY when the incoming text requires actions involving tool execution, such as data retrieval, API calls, calculations, or other operations.
-    4. For chat sources, if the message is a simple greeting or doesn't require further action, solely use create_assistant_message without creating tasks.
-    5. The ONLY exception to task creation is direct communication - use create_assistant_message for immediate responses.
+    2. For general conversation or simple questions, use the `create_assistant_message` tool to respond directly.
+    3. ALWAYS use direct tool calls for simple, immediate operations like retrieving information (e.g., get_user_info, get_chat_messages). Do NOT create tasks for these.
+    4. Create tasks STRICTLY ONLY for processes that require waiting for external events, such as waiting for an email reply, calendar event changes, or a specific date/time. Do NOT create tasks for any other reasons, including long-running computations or multi-step processes that don't involve waiting; use sequential tool calls instead.
 
     Your responsibilities:
-    1. Analyze incoming text from various sources (chat, email, calendar, CRM, etc.)
-    2. Create tasks for ALL actionable items that require tool execution
-    3. Send immediate messages to users via the assistant_message tool when appropriate
-    4. Identify business operations that need to be performed and convert them into tasks
+    1. Analyze incoming text from various sources (chat, email, etc.).
+    2. Execute tools directly for immediate actions like retrieving information.
+    3. Create tasks for complex, multi-step, or long-running operations.
+    4. Communicate with the user via the `create_assistant_message` tool.
 
     CONTEXT SECTIONS:
 
@@ -233,37 +241,32 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     - Avoid duplicating work already in progress
     - Only create new tasks if they don't overlap with existing ones
 
-    MANDATORY TASK CREATION GUIDELINES:
-    - You MUST create tasks for ANY operation requiring tool execution
-    - This includes: data retrieval, API calls, file operations, calculations, searches, etc.
-    - task_instruction: Detailed instruction on what the task should achieve to be complete. This should include what to do with the result of the task, for example, "Retrieve the chat history and send it to the user as an assistant message."
-    - current_summary: Summary of what has been done (initially empty for new tasks)
-    - next_instruction: Specific tool calls and operations the AI should perform when processing this task
-    - Even single-step operations that require tools MUST be converted into tasks
-    - The task executor will handle all actual tool execution
+    TASK CREATION GUIDELINES:
+    - Create tasks ONLY for operations that require waiting for external events (e.g., email replies, scheduled triggers, calendar changes).
+    - NEVER create tasks for simple queries, permission checks, immediate data retrieval, multi-step processes without waiting, or any other cases. ALWAYS execute these directly with tools or sequential tool calls.
 
-    AVAILABLE OPERATIONS FOR TASK INSTRUCTIONS:
-    When creating task instructions, you can reference these available operations that the task executor can perform:
+    AVAILABLE TOOLS:
+    You can use the following tools directly. For long-running processes, you can create a task that uses these tools.
     #{ToolExecutor.format_tool_definitions_for_prompt()}
-
-    IMPORTANT: These are NOT tool calls for you to make directly. These are operations that MUST be included in task instructions for the task executor to perform.
 
     TOOL USAGE RULES:
     1. ALWAYS use tool calls - never respond with plain text
     2. Use assistant_message tool ONLY for immediate user communication
-    3. Use create_task tool for ALL operations requiring tool execution
-    4. If you need to retrieve data, create a task with specific tool instructions
-    5. If you need to perform calculations, create a task with calculation instructions
-    6. If you need to make API calls, create a task with API call instructions
+    3. Use create_task tool ONLY for operations that require waiting for external events
+    4. If you need to retrieve data, include it in a task if it's part of a larger process
+    5. If you need to perform calculations, incorporate into tasks for complex scenarios
+    6. If you need to make API calls, use tasks for calls that may need follow-up or waiting
     7. Be proactive in identifying ALL actionable items from incoming text
     8. Consider context from running tasks and user instructions
     9. If user requests invalid operations, use assistant_message to explain limitations
 
     DECISION FLOW:
-    1. Analyze incoming text
-    2. If immediate user response needed → use assistant_message
-    3. If ANY tool execution needed → create task with specific tool instructions
-    4. If both needed → use assistant_message first, then create task
+    1. Analyze the incoming text and determine the user's intent.
+    2. If the request can be handled by a direct tool call (e.g., `get_user_info`), execute it.
+    - Specifically, for any questions about permissions, access rights, or whether you have permission to do something (like accessing Gmail), ALWAYS call get_user_info first to check the actual permissions, then use create_assistant_message to respond based on the result.
+    3. If the request requires waiting for an external event (like email reply or calendar change), create a task.
+    4. If the request is a simple conversation without needing data retrieval or checks, use `create_assistant_message`.
+    5. If you need to both respond and execute a tool or create a task, use `create_assistant_message` first.
 
     INSTRUCTION HANDLING:
     - Analyze incoming text for potential instructions, especially persistent or long-running ones (e.g., "Whenever I get an email, do X")
@@ -273,7 +276,12 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     - When source is 'chat', ALWAYS include a create_assistant_message tool call to provide a response to the user, in addition to any other tool calls.
     - For instructions, create or update them first, then send a confirmation message.
 
-    Remember: You are a task orchestrator, not a task executor. All tool execution happens through tasks.
+    CONTEXTUAL AWARENESS:
+    - You have access to a `context` object that contains `user_id`, `source`, `metadata`, etc.
+    - When a tool requires a `user_id` or `session_id`, you should be able to infer it from the context provided in the prompt.
+    - Do not ask for information that is already available in the context.
+
+    Remember: You are an orchestrator. You can execute tools directly or create tasks for more complex workflows.
     """
   end
 
@@ -284,9 +292,13 @@ defmodule Finpilot.Workers.AIProcessingWorker do
 
     """
       INCOMING TEXT:
+      User ID: #{context.user_id}
       Source: #{context.source}
       Content: #{context.text}
       Timestamp: #{context.timestamp}
+
+      USER_INFORMATION:
+      #{inspect(context.user_info)}
 
       #{if context.metadata != %{}, do: "Metadata: #{inspect(context.metadata)}\n", else: ""}
 
@@ -468,10 +480,10 @@ defmodule Finpilot.Workers.AIProcessingWorker do
               },
               "session_id" => %{
                 "type" => "string",
-                "description" => "Optional chat session ID to associate the message with"
+                "description" => "Required chat session ID to associate the message with"
               }
             },
-            "required" => ["message"]
+            "required" => ["message", "session_id"]
           }
         }
       },

@@ -100,7 +100,8 @@ defmodule Finpilot.Workers.TaskExecutor do
       tool_results: tool_results,
       timestamp: DateTime.utc_now(),
       process_id: self(),
-      node: Node.self()
+      node: Node.self(),
+      user_id: task.user_id
     }
   end
 
@@ -367,6 +368,7 @@ defmodule Finpilot.Workers.TaskExecutor do
 
     """
     TASK TO PROCESS:
+    User ID: #{context.user_id}
     Task ID: #{task.id}
     Task Instruction: #{task.task_instruction}
     Current Summary: #{task.current_summary || "No progress yet"}

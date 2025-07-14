@@ -1,6 +1,7 @@
 defmodule FinpilotWeb.Structs.ProcessingContext do
   defstruct [
     :text,
+    :user_info,
     :user_id,
     :source,
     :metadata,

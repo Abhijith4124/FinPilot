@@ -36,10 +36,12 @@ defmodule Finpilot.Services.OpenRouter do
       }
 
       # Add tools if provided
+      tool_choice_opt = Keyword.get(opts, :tool_choice, "auto")
+
       request_body = if length(tools) > 0 do
         request_body
         |> Map.put("tools", tools)
-        |> Map.put("tool_choice", "auto")  # Explicitly enable tool calling
+        |> Map.put("tool_choice", tool_choice_opt)
       else
         request_body
       end
