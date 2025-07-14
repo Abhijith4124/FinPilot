@@ -60,48 +60,6 @@ defmodule Finpilot.ChatMessagesTest do
       assert %Ecto.Changeset{} = ChatMessages.change_chat_message(chat_message)
     end
 
-    test "create_chat_message/1 automatically generates embeddings for user and assistant messages" do
-      user = user_fixture()
-      session = chat_session_fixture(%{user_id: user.id})
-      
-      # Test user message - should generate embedding
-      user_attrs = %{
-        message: "Hello, how can I help you today?",
-        role: "user",
-        session_id: session.id,
-        user_id: user.id
-      }
-      
-      assert {:ok, %ChatMessage{} = user_message} = ChatMessages.create_chat_message(user_attrs)
-      assert user_message.message == "Hello, how can I help you today?"
-      assert user_message.role == "user"
-      # Note: In test environment, OpenAI API might not be available, so embedding could be nil
-      # In a real test, you'd mock the OpenAI service
-      
-      # Test assistant message - should generate embedding
-      assistant_attrs = %{
-        message: "I'm here to help! What can I do for you?",
-        role: "assistant",
-        session_id: session.id,
-        user_id: user.id
-      }
-      
-      assert {:ok, %ChatMessage{} = assistant_message} = ChatMessages.create_chat_message(assistant_attrs)
-      assert assistant_message.message == "I'm here to help! What can I do for you?"
-      assert assistant_message.role == "assistant"
-      
-      # Test system message - should NOT generate embedding
-      system_attrs = %{
-        message: "System notification: User logged in",
-        role: "system",
-        session_id: session.id,
-        user_id: user.id
-      }
-      
-      assert {:ok, %ChatMessage{} = system_message} = ChatMessages.create_chat_message(system_attrs)
-      assert system_message.message == "System notification: User logged in"
-      assert system_message.role == "system"
-      assert is_nil(system_message.embedding)
-    end
+
   end
 end

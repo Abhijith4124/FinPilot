@@ -44,6 +44,75 @@ defmodule Finpilot.ChatMessages do
   end
 
   @doc """
+  Returns the list of chat messages for a specific user across all sessions.
+
+  ## Examples
+
+      iex> list_messages_by_user(user_id)
+      [%ChatMessage{}, ...]
+
+  """
+  def list_messages_by_user(user_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+    offset = Keyword.get(opts, :offset, 0)
+    role_filter = Keyword.get(opts, :role_filter)
+
+    base_query = ChatMessage
+    |> where([cm], cm.user_id == ^user_id)
+    |> order_by([cm], desc: cm.inserted_at)
+    |> limit(^limit)
+    |> offset(^offset)
+
+    query = if role_filter do
+      where(base_query, [cm], cm.role == ^role_filter)
+    else
+      base_query
+    end
+
+    Repo.all(query)
+  end
+
+  @doc """
+  Search for chat messages containing a query string in the message field.
+  Can be filtered by user_id and/or session_id.
+
+  ## Examples
+
+      iex> search_messages("hello", user_id: 1)
+      [%ChatMessage{}, ...]
+
+      iex> search_messages("error", session_id: 123, limit: 10)
+      [%ChatMessage{}, ...]
+
+  """
+  def search_messages(query, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 50)
+    offset = Keyword.get(opts, :offset, 0)
+    user_id = Keyword.get(opts, :user_id)
+    session_id = Keyword.get(opts, :session_id)
+    role_filter = Keyword.get(opts, :role_filter)
+
+    base_query = ChatMessage
+    |> where([cm], ilike(cm.message, ^("%#{query}%")))
+    |> order_by([cm], desc: cm.inserted_at)
+    |> limit(^limit)
+    |> offset(^offset)
+
+    query_with_filters = base_query
+    |> then(fn q ->
+      if user_id, do: where(q, [cm], cm.user_id == ^user_id), else: q
+    end)
+    |> then(fn q ->
+      if session_id, do: where(q, [cm], cm.session_id == ^session_id), else: q
+    end)
+    |> then(fn q ->
+      if role_filter, do: where(q, [cm], cm.role == ^role_filter), else: q
+    end)
+
+    Repo.all(query_with_filters)
+  end
+
+  @doc """
   Creates a user message in a chat session.
 
   ## Examples

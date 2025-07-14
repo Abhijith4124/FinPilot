@@ -13,12 +13,7 @@ defmodule Finpilot.Services.OpenRouter do
   @base_url "https://openrouter.ai/api/v1"
 
   @doc """
-  Calls AI with a specific model.
-
-  ## Parameters
-  - model: The AI model to use (e.g., "anthropic/claude-3.5-sonnet")
-  - messages: List of message maps with "role" and "content" keys
-  - opts: Optional parameters like tools, system_prompt, temperature, etc.
+  Calls AI with a specific model..
 
   ## Returns
   - {:ok, :message, updated_messages} - Normal text response

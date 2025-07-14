@@ -10,7 +10,6 @@ defmodule Finpilot.Tasks.Task do
     field :current_summary, :string
     field :next_instruction, :string
     field :is_done, :boolean, default: false
-    field :embedding, Pgvector.Ecto.Vector
     belongs_to :user, Finpilot.Accounts.User
 
     timestamps(type: :utc_datetime)
@@ -19,7 +18,8 @@ defmodule Finpilot.Tasks.Task do
   @doc false
   def changeset(task, attrs) do
     task
-    |> cast(attrs, [:task_instruction, :current_summary, :next_instruction, :is_done, :context, :embedding])
-    |> validate_required([:task_instruction, :current_summary, :next_instruction, :is_done])
+    |> cast(attrs, [:task_instruction, :current_summary, :next_instruction, :is_done, :context, :user_id])
+    |> validate_required([:task_instruction, :current_summary, :next_instruction, :is_done, :user_id, :context])
+    |> foreign_key_constraint(:user_id)
   end
 end

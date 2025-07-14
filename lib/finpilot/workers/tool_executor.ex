@@ -1,188 +1,74 @@
 defmodule Finpilot.Workers.ToolExecutor do
   @moduledoc """
-  Handles execution of AI-selected tools for memory and search operations.
-  This module provides a centralized way to execute various tools
-  that the AI can call to search and retrieve relevant context.
+  Handles execution of AI-selected tools.
   """
 
-  require Logger
-  alias Finpilot.Services.Memory
+  alias Finpilot.ChatMessages
+  alias Finpilot.ChatSessions
 
-  @doc """
-  Execute a tool with the given name, arguments, and user context.
-  
-  ## Examples
-  
-      iex> ToolExecutor.execute_tool("search_tasks", %{"query" => "Send email"}, user_id)
-      {:ok, [%{id: 1, task_instruction: "...", similarity: 0.85}]}
-      
-      iex> ToolExecutor.execute_tool("search_chat_messages", %{"query" => "Hello"}, user_id)
-      {:ok, [%{id: 1, message: "...", similarity: 0.90}]}
-      
-      iex> ToolExecutor.execute_tool("find_relevant_context", %{"query" => "email setup"}, user_id)
-      {:ok, %{tasks: [...], messages: [...]}}
-  """
-  def execute_tool(tool_name, args, user_id) do
-    case tool_name do
-      "search_tasks" -> search_tasks(args, user_id)
-      "search_chat_messages" -> search_chat_messages(args, user_id)
-      "find_relevant_context" -> find_relevant_context(args, user_id)
+  def execute_tool("get_chat_messages", args, user_id) do
+    session_id = Map.get(args, "session_id")
+    limit = Map.get(args, "limit", 50)
+    offset = Map.get(args, "offset", 0)
 
-      _ -> {:error, "Unknown tool: #{tool_name}"}
+    if session_id == nil do
+      {:error, "session_id is required"}
+    else
+      with {:ok, session} <- ChatSessions.get_chat_session(session_id),
+           true <- session.user_id == user_id do
+        messages = ChatMessages.list_messages_by_session(session_id, limit: limit, offset: offset)
+        formatted = Enum.map(messages, fn msg ->
+          %{
+            "id" => msg.id,
+            "role" => msg.role,
+            "message" => msg.message,
+            "inserted_at" => msg.inserted_at,
+            "session_id" => msg.session_id,
+            "user_id" => msg.user_id
+          }
+        end)
+        {:ok, %{"messages" => formatted, "count" => length(formatted)}}
+      else
+        false -> {:error, "Access denied: session does not belong to user"}
+        {:error, :not_found} -> {:error, "Session not found"}
+      end
     end
   end
 
-  @doc """
-  Returns tool definitions for LLM integration.
-  These definitions can be used with OpenRouter or other LLM providers.
-  """
-  def tool_definitions do
+  def execute_tool(tool_name, _args, _user_id) do
+    {:error, "Unknown tool: #{tool_name}"}
+  end
+
+  def get_tool_definitions do
     [
       %{
         "type" => "function",
         "function" => %{
-          "name" => "search_tasks",
-          "description" => "Search for similar tasks based on semantic similarity",
+          "name" => "get_chat_messages",
+          "description" => "Retrieve chat messages from a specific chat session with pagination support",
           "parameters" => %{
             "type" => "object",
             "properties" => %{
-              "query" => %{
-                "type" => "string",
-                "description" => "The search query to find similar tasks"
-              },
-              "limit" => %{
-                "type" => "integer",
-                "description" => "Maximum number of results to return (default: 10)"
-              },
-              "threshold" => %{
-                "type" => "number",
-                "description" => "Similarity threshold (default: 0.7)"
-              },
-              "include_completed" => %{
-                "type" => "boolean",
-                "description" => "Include completed tasks (default: true)"
-              }
+              "session_id" => %{"type" => "string", "description" => "The ID of the chat session"},
+              "limit" => %{"type" => "integer", "description" => "Maximum number of messages to retrieve (default: 50)", "minimum" => 1, "maximum" => 100},
+              "offset" => %{"type" => "integer", "description" => "Number of messages to skip for pagination (default: 0)", "minimum" => 0}
             },
-            "required" => ["query"]
-          }
-        }
-      },
-      %{
-        "type" => "function",
-        "function" => %{
-          "name" => "search_chat_messages",
-          "description" => "Search for similar chat messages based on semantic similarity",
-          "parameters" => %{
-            "type" => "object",
-            "properties" => %{
-              "query" => %{
-                "type" => "string",
-                "description" => "The search query to find similar messages"
-              },
-              "limit" => %{
-                "type" => "integer",
-                "description" => "Maximum number of results to return (default: 10)"
-              },
-              "threshold" => %{
-                "type" => "number",
-                "description" => "Similarity threshold (default: 0.7)"
-              },
-              "role_filter" => %{
-                "type" => "string",
-                "description" => "Filter by message role (user, assistant, system)"
-              },
-              "session_id" => %{
-                "type" => "string",
-                "description" => "Filter by specific chat session"
-              }
-            },
-            "required" => ["query"]
-          }
-        }
-      },
-      %{
-        "type" => "function",
-        "function" => %{
-          "name" => "find_relevant_context",
-          "description" => "Find relevant context by searching both tasks and chat messages",
-          "parameters" => %{
-            "type" => "object",
-            "properties" => %{
-              "query" => %{
-                "type" => "string",
-                "description" => "The search query to find relevant context"
-              },
-              "task_limit" => %{
-                "type" => "integer",
-                "description" => "Maximum number of task results (default: 5)"
-              },
-              "message_limit" => %{
-                "type" => "integer",
-                "description" => "Maximum number of message results (default: 5)"
-              },
-              "threshold" => %{
-                "type" => "number",
-                "description" => "Similarity threshold (default: 0.7)"
-              }
-            },
-            "required" => ["query"]
+            "required" => ["session_id"]
           }
         }
       }
     ]
   end
 
-  # Private functions for tool implementations
-  
-  defp search_tasks(args, user_id) do
-    query = Map.get(args, "query")
-    opts = build_search_opts(args, [:limit, :threshold, :include_completed])
+  def format_tool_definitions_for_prompt do
+    """
+    Available Tools:
 
-    case Memory.search_tasks(user_id, query, opts) do
-      {:ok, tasks} ->
-        Logger.info("[ToolExecutor] Successfully searched tasks: #{length(tasks)} results")
-        {:ok, tasks}
-      {:error, reason} ->
-        Logger.error("[ToolExecutor] Failed to search tasks: #{reason}")
-        {:error, "Failed to search tasks: #{reason}"}
-    end
-  end
-
-  defp search_chat_messages(args, user_id) do
-    query = Map.get(args, "query")
-    opts = build_search_opts(args, [:limit, :threshold, :role_filter, :session_id])
-
-    case Memory.search_chat_messages(user_id, query, opts) do
-      {:ok, messages} ->
-        Logger.info("[ToolExecutor] Successfully searched chat messages: #{length(messages)} results")
-        {:ok, messages}
-      {:error, reason} ->
-        Logger.error("[ToolExecutor] Failed to search chat messages: #{reason}")
-        {:error, "Failed to search chat messages: #{reason}"}
-    end
-  end
-
-  defp find_relevant_context(args, user_id) do
-    query = Map.get(args, "query")
-    opts = build_search_opts(args, [:task_limit, :message_limit, :threshold])
-
-    case Memory.find_relevant_context(user_id, query, opts) do
-      {:ok, context} ->
-        Logger.info("[ToolExecutor] Successfully found relevant context: #{length(context.tasks)} tasks, #{length(context.messages)} messages")
-        {:ok, context}
-      {:error, reason} ->
-        Logger.error("[ToolExecutor] Failed to find relevant context: #{reason}")
-        {:error, "Failed to find relevant context: #{reason}"}
-    end
-  end
-
-  defp build_search_opts(args, allowed_keys) do
-    allowed_keys
-    |> Enum.reduce([], fn key, acc ->
-      case Map.get(args, Atom.to_string(key)) do
-        nil -> acc
-        value -> [{key, value} | acc]
-      end
-    end)
+    1. get_chat_messages
+       - Description: Retrieve chat messages from a specific chat session
+       - Required: session_id (string)
+       - Optional: limit (integer, 1-100, default: 50), offset (integer, default: 0)
+       - Returns: List of messages with id, role, message, inserted_at, session_id, user_id
+    """
   end
 end

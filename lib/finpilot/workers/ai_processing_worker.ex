@@ -13,8 +13,8 @@ defmodule Finpilot.Workers.AIProcessingWorker do
 
   alias Finpilot.Tasks.{Task, Instruction}
   alias Finpilot.Workers.TaskExecutor
+  alias Finpilot.Workers.ToolExecutor
   alias Finpilot.Services.OpenRouter
-  alias Finpilot.Services.Memory
   alias Finpilot.ChatMessages
   alias Finpilot.Repo
   import Ecto.Query
@@ -24,30 +24,29 @@ defmodule Finpilot.Workers.AIProcessingWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{
-        id: job_id,
         args: %{"text" => text, "user_id" => user_id, "source" => source} = args
       }) do
-    Logger.info("[AIProcessingWorker] Starting job #{job_id} for user #{user_id} from source #{source}")
+    Logger.info("[AIProcessingWorker] Starting processing for user #{user_id} from source #{source}")
     Logger.debug("[AIProcessingWorker] Job args: #{inspect(args)}")
 
     user_id = ensure_binary_id(user_id)
 
     # Build context with instructions, running tasks, and metadata
     Logger.debug("[AIProcessingWorker] Building context for user #{user_id}")
-    context = build_context(text, user_id, source, args, job_id)
+    context = build_context(text, user_id, source, args)
     Logger.debug("[AIProcessingWorker] Context built with #{length(context.instructions)} instructions, #{length(context.running_tasks)} running tasks")
 
     # Call AI with direct tool calling
-    Logger.info("[AIProcessingWorker] Calling AI with tools for job #{job_id}")
+    Logger.info("[AIProcessingWorker] Calling AI with tools")
     case call_ai_with_tools(context) do
       {:ok, :tool_call, _updated_messages, tool_calls} ->
-        Logger.info("[AIProcessingWorker] AI returned #{length(tool_calls)} tool calls for job #{job_id}")
+        Logger.info("[AIProcessingWorker] AI returned #{length(tool_calls)} tool calls")
         Logger.debug("[AIProcessingWorker] Tool calls: #{inspect(tool_calls)}")
-        result = execute_tool_calls(tool_calls, user_id)
-        Logger.info("[AIProcessingWorker] Job #{job_id} completed successfully")
+        result = execute_tool_calls(tool_calls, user_id, context)
+        Logger.info("[AIProcessingWorker] Processing completed successfully")
         {:ok, result}
       {:error, reason} ->
-        Logger.error("[AIProcessingWorker] AI processing failed for job #{job_id}: #{reason}")
+        Logger.error("[AIProcessingWorker] AI processing failed: #{reason}")
         {:error, "AI processing failed: #{reason}"}
     end
   end
@@ -57,10 +56,9 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   defp ensure_binary_id(user_id), do: to_string(user_id)
 
   # Build comprehensive context for AI processing with enhanced metadata
-  defp build_context(text, user_id, source, args, job_id) do
+  defp build_context(text, user_id, source, args) do
     instructions = get_active_instructions(user_id)
     running_tasks = get_running_tasks(user_id)
-    relevant_memory = get_relevant_memory(user_id, text)
 
     %{
       text: text,
@@ -69,11 +67,9 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       metadata: Map.drop(args, ["text", "user_id", "source"]),
       instructions: instructions,
       running_tasks: running_tasks,
-      relevant_memory: relevant_memory,
       timestamp: DateTime.utc_now(),
       process_id: self(),
-      node: Node.self(),
-      job_id: job_id
+      node: Node.self()
     }
   end
 
@@ -127,57 +123,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     end
   end
 
-  # Get relevant memory (tasks and messages) using semantic search
-  defp get_relevant_memory(user_id, text) do
-    Logger.debug("[AIProcessingWorker] Fetching relevant memory for user #{user_id}")
 
-    try do
-      case Memory.find_relevant_context(user_id, text,
-             task_limit: 5,
-             message_limit: 10,
-             threshold: 0.7
-           ) do
-        {:ok, %{tasks: tasks, messages: messages}} ->
-          Logger.debug("[AIProcessingWorker] Found #{length(tasks)} relevant tasks and #{length(messages)} relevant messages for user #{user_id}")
-          %{
-            tasks: format_memory_tasks(tasks),
-            messages: format_memory_messages(messages)
-          }
-
-        {:error, reason} ->
-          Logger.warning("[AIProcessingWorker] Memory search failed for user #{user_id}: #{reason}")
-          %{tasks: [], messages: []}
-      end
-    rescue
-      e ->
-        Logger.error("[AIProcessingWorker] Error fetching relevant memory for user #{user_id}: #{inspect(e)}")
-        %{tasks: [], messages: []}
-    end
-  end
-
-  # Format memory tasks for AI context
-  defp format_memory_tasks(tasks) do
-    Enum.map(tasks, fn task ->
-      %{
-        id: task.id,
-        instruction: task.task_instruction,
-        status: if(task.is_done, do: "completed", else: "incomplete"),
-        created_at: task.inserted_at
-      }
-    end)
-  end
-
-  # Format memory messages for AI context
-  defp format_memory_messages(messages) do
-    Enum.map(messages, fn message ->
-      %{
-        id: message.id,
-        role: message.role,
-        content: message.message,
-        created_at: message.inserted_at
-      }
-    end)
-  end
 
   # Call AI with direct tool calling
   defp call_ai_with_tools(context) do
@@ -211,7 +157,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   end
 
   # Execute individual tool calls with better error handling
-  defp execute_tool_calls(tool_calls, user_id) do
+  defp execute_tool_calls(tool_calls, user_id, context) do
     Logger.info("[AIProcessingWorker] Executing #{length(tool_calls)} tool calls for user #{user_id}")
 
     Enum.with_index(tool_calls, 1)
@@ -223,7 +169,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
         Logger.info("[AIProcessingWorker] Executing tool #{index}/#{length(tool_calls)}: #{tool_name} for user #{user_id}")
         Logger.debug("[AIProcessingWorker] Tool args: #{inspect(tool_args)}")
 
-        case execute_tool(tool_name, tool_args, user_id) do
+        case execute_tool(tool_name, tool_args, user_id, context) do
           {:ok, result} ->
             Logger.info("[AIProcessingWorker] Tool #{tool_name} executed successfully for user #{user_id}")
             Logger.debug("[AIProcessingWorker] Tool result: #{inspect(result)}")
@@ -245,15 +191,18 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   # Get system prompt for AI
   defp get_system_prompt do
     """
-    You are FinPilot, an intelligent AI assistant that analyzes incoming text and creates tasks for complex multi-step processes.
+    You are FinPilot, an intelligent AI assistant that analyzes incoming text and creates tasks for ALL operations that require tool execution.
 
-    CRITICAL: You MUST ONLY respond using tool calls. Never provide text responses or explanations outside of tool calls.
+    CRITICAL RULES:
+    1. You MUST ONLY respond using tool calls. Never provide text responses or explanations outside of tool calls.
+    2. For ANY operation that requires tool execution (data retrieval, external API calls, file operations, etc.), you MUST create a task using the create_task tool.
+    3. The ONLY exception is direct communication with users - use assistant_message tool for immediate responses.
 
     Your responsibilities:
     1. Analyze incoming text from various sources (chat, email, calendar, CRM, etc.)
-    2. Create tasks for actionable items that require multiple steps
-    3. Send messages to users via the assistant_message tool
-    4. Identify business operations that need to be performed
+    2. Create tasks for ALL actionable items that require tool execution
+    3. Send immediate messages to users via the assistant_message tool when appropriate
+    4. Identify business operations that need to be performed and convert them into tasks
 
     CONTEXT SECTIONS:
 
@@ -274,37 +223,39 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     - Avoid duplicating work already in progress
     - Only create new tasks if they don't overlap with existing ones
 
-    RELEVANT MEMORY:
-    - Semantically similar past tasks and messages
-    - Helps avoid repeating previous work
-    - Use for informed decision-making about task creation
-
-    TASK CREATION GUIDELINES:
-    - Tasks are used to build chains of tool calls for multi-step processes
-    - task_instruction: Detailed instruction on what the task should achieve to be complete
+    MANDATORY TASK CREATION GUIDELINES:
+    - You MUST create tasks for ANY operation requiring tool execution
+    - This includes: data retrieval, API calls, file operations, calculations, searches, etc.
+    - task_instruction: Detailed instruction on what the task should achieve to be complete. This should include what to do with the result of the task, for example, "Retrieve the chat history and send it to the user as an assistant message."
     - current_summary: Summary of what has been done (initially empty for new tasks)
-    - next_instruction: What the AI should do when processing this task next
-    - Only create tasks for complex processes that require multiple steps or external actions
-    - Simple responses should use assistant_message tool directly
+    - next_instruction: Specific tool calls and operations the AI should perform when processing this task
+    - Even single-step operations that require tools MUST be converted into tasks
+    - The task executor will handle all actual tool execution
 
-    AVAILABLE SEARCH AND MEMORY OPERATIONS:
+    AVAILABLE OPERATIONS FOR TASK INSTRUCTIONS:
     When creating task instructions, you can reference these available operations that the task executor can perform:
-    - search_tasks: Search for similar tasks based on semantic similarity (requires query parameter)
-    - search_chat_messages: Search for similar chat messages based on semantic similarity (requires query parameter, optional: limit, threshold, role_filter, session_id)
-    - find_relevant_context: Find relevant context by searching both tasks and chat messages (requires query parameter, optional: task_limit, message_limit, threshold)
+    #{ToolExecutor.format_tool_definitions_for_prompt()}
 
-    IMPORTANT: These are NOT tool calls for you to make directly. These are operations that can be included in task instructions for the task executor to perform.
+    IMPORTANT: These are NOT tool calls for you to make directly. These are operations that MUST be included in task instructions for the task executor to perform.
 
     TOOL USAGE RULES:
     1. ALWAYS use tool calls - never respond with plain text
-    2. Use assistant_message tool to communicate with users
-    3. Use create_task tool ONLY for actionable items requiring multiple steps
-    4. Be proactive in identifying actionable items from incoming text
-    5. Consider context from running tasks and user instructions
-    6. Use relevant memory to avoid duplicating previous decisions
-    7. If user requests invalid operations, use create_assistant_message to explain limitations
+    2. Use assistant_message tool ONLY for immediate user communication
+    3. Use create_task tool for ALL operations requiring tool execution
+    4. If you need to retrieve data, create a task with specific tool instructions
+    5. If you need to perform calculations, create a task with calculation instructions
+    6. If you need to make API calls, create a task with API call instructions
+    7. Be proactive in identifying ALL actionable items from incoming text
+    8. Consider context from running tasks and user instructions
+    9. If user requests invalid operations, use assistant_message to explain limitations
 
-    Remember: Every response must be a tool call. Task execution and updates are handled by a separate system.
+    DECISION FLOW:
+    1. Analyze incoming text
+    2. If immediate user response needed → use assistant_message
+    3. If ANY tool execution needed → create task with specific tool instructions
+    4. If both needed → use assistant_message first, then create task
+
+    Remember: You are a task orchestrator, not a task executor. All tool execution happens through tasks.
     """
   end
 
@@ -312,7 +263,6 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   defp build_ai_prompt(context) do
     instructions_text = format_instructions(context.instructions)
     tasks_text = format_running_tasks(context.running_tasks)
-    memory_text = format_relevant_memory(context.relevant_memory)
 
     """
     INCOMING TEXT:
@@ -328,12 +278,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     RUNNING TASKS:
     #{tasks_text}
 
-    RELEVANT MEMORY:
-    #{memory_text}
-
     Please analyze this incoming text and respond appropriately using tool calls for actions or direct messages for communication.
-
-    Use the relevant memory context to make informed decisions and avoid duplicating previous work.
     """
   end
 
@@ -364,54 +309,16 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     |> Enum.join("\n---\n")
   end
 
-  # Format relevant memory for AI prompt
-  defp format_relevant_memory(%{tasks: [], messages: []}), do: "No relevant memory found."
 
-  defp format_relevant_memory(%{tasks: tasks, messages: messages}) do
-    tasks_section =
-      if Enum.empty?(tasks) do
-        "No relevant tasks."
-      else
-        "RELEVANT TASKS:\n" <>
-          (tasks
-           |> Enum.map(fn task ->
-             "- [#{task.status}] #{task.instruction} (#{format_date(task.created_at)})"
-           end)
-           |> Enum.join("\n"))
-      end
-
-    messages_section =
-      if Enum.empty?(messages) do
-        "No relevant messages."
-      else
-        "RELEVANT MESSAGES:\n" <>
-          (messages
-           |> Enum.map(fn message ->
-             "- [#{message.role}] #{String.slice(message.content, 0, 100)}#{if String.length(message.content) > 100, do: "...", else: ""} (#{format_date(message.created_at)})"
-           end)
-           |> Enum.join("\n"))
-      end
-
-    "#{tasks_section}\n\n#{messages_section}"
-  end
-
-  # Format date for display
-  defp format_date(datetime) do
-    case datetime do
-      %DateTime{} -> DateTime.to_string(datetime)
-      %NaiveDateTime{} -> NaiveDateTime.to_string(datetime)
-      _ -> "Unknown date"
-    end
-  end
 
   # Get tool definitions for AI processing
-  defp get_tool_definitions do
+  def get_tool_definitions do
     [
       %{
         "type" => "function",
         "function" => %{
           "name" => "create_task",
-          "description" => "Create a new task for complex multi-step processes that require ongoing execution and updates",
+          "description" => "Create a new task for tool calling and multi step tool calling process",
           "parameters" => %{
             "type" => "object",
             "properties" => %{
@@ -421,7 +328,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
               },
               "current_summary" => %{
                 "type" => "string",
-                "description" => "Summary of what has been done so far (initially empty for new tasks)",
+                "description" => "Summary of what has been done so far (initially just the starting summary)",
                 "default" => ""
               },
               "next_instruction" => %{
@@ -484,48 +391,68 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   end
 
   # Execute tool calls locally
-  defp execute_tool("create_task", args, user_id) do
+  defp execute_tool("create_task", args, user_id, context) do
     Logger.info("[AIProcessingWorker] Creating task for user #{user_id}")
-    
+
+    # Ensure current_summary is not blank
+    current_summary = case args["current_summary"] do
+      nil -> "Task created and ready to begin"
+      "" -> "Task created and ready to begin"
+      summary when is_binary(summary) ->
+        trimmed = String.trim(summary)
+        if byte_size(trimmed) > 0, do: summary, else: "Task created and ready to begin"
+      _ -> "Task created and ready to begin"
+    end
+
+    # Use the provided context or extract session_id from the original context
+    task_context = args["context"] || %{
+      "session_id" => Map.get(context.metadata || %{}, "session_id")
+    }
+
     task_params = %{
       user_id: user_id,
       task_instruction: args["task_instruction"] || "",
-      current_summary: args["current_summary"] || "",
+      current_summary: current_summary,
       next_instruction: args["next_instruction"] || "",
-      context: args["context"] || %{},
+      context: task_context,
       is_done: false
     }
-    
+
     case Finpilot.Tasks.create_task(task_params) do
       {:ok, task} ->
         Logger.info("[AIProcessingWorker] Task created successfully: #{task.id}")
-        
+
         # Enqueue the task for execution
-        case TaskExecutor.new(%{"task_id" => task.id}) |> Oban.insert() do
+        case TaskExecutor.new(%{"task_id" => task.id, "user_id" => user_id}) |> Oban.insert() do
           {:ok, job} ->
             Logger.info("[AIProcessingWorker] Task execution job enqueued: #{job.id}")
-            {:ok, %{task_id: task.id, job_id: job.id, message: "Task created and execution started"}}
+            {:ok, %{task_id: task.id, job_id: job.id, current_summary: task.current_summary, message: "Task created and execution started"}}
           {:error, reason} ->
             Logger.error("[AIProcessingWorker] Failed to enqueue task execution: #{reason}")
+            # Create system message about the error
+            create_error_system_message(user_id, "Failed to start task execution: #{reason}", args["session_id"])
             {:error, "Failed to start task execution: #{reason}"}
         end
-        
+
       {:error, changeset} ->
-        Logger.error("[AIProcessingWorker] Failed to create task: #{inspect(changeset.errors)}")
-        {:error, "Failed to create task: #{inspect(changeset.errors)}"}
+        error_msg = "Failed to create task: #{inspect(changeset.errors)}"
+        Logger.error("[AIProcessingWorker] #{error_msg}")
+        # Create system message about the error
+        create_error_system_message(user_id, error_msg, args["session_id"])
+        {:error, error_msg}
     end
   end
-  
-  defp execute_tool("create_assistant_message", args, user_id) do
+
+  defp execute_tool("create_assistant_message", args, user_id, _context) do
     Logger.info("[AIProcessingWorker] Creating assistant message for user #{user_id}")
-    
+
     message_params = %{
       user_id: user_id,
       role: "assistant",
       message: args["message"],
       session_id: args["session_id"]
     }
-    
+
     case ChatMessages.create_chat_message(message_params) do
       {:ok, message} ->
         Logger.info("[AIProcessingWorker] Assistant message created: #{message.id}")
@@ -535,17 +462,17 @@ defmodule Finpilot.Workers.AIProcessingWorker do
         {:error, "Failed to create message: #{inspect(changeset.errors)}"}
     end
   end
-  
-  defp execute_tool("create_system_message", args, user_id) do
+
+  defp execute_tool("create_system_message", args, user_id, _context) do
     Logger.info("[AIProcessingWorker] Creating system message for user #{user_id}")
-    
+
     message_params = %{
       user_id: user_id,
       role: "system",
       message: args["message"],
       session_id: args["session_id"]
     }
-    
+
     case ChatMessages.create_chat_message(message_params) do
       {:ok, message} ->
         Logger.info("[AIProcessingWorker] System message created: #{message.id}")
@@ -555,11 +482,27 @@ defmodule Finpilot.Workers.AIProcessingWorker do
         {:error, "Failed to create message: #{inspect(changeset.errors)}"}
     end
   end
-  
-  defp execute_tool(tool_name, _args, user_id) do
+
+  defp execute_tool(tool_name, _args, user_id, _context) do
     Logger.error("[AIProcessingWorker] Unknown tool: #{tool_name} for user #{user_id}")
     {:error, "Unknown tool: #{tool_name}"}
   end
 
+  # Helper function to create system messages for errors
+  defp create_error_system_message(user_id, error_message, session_id) do
+    message_params = %{
+      user_id: user_id,
+      role: "system",
+      message: "Error: #{error_message}",
+      session_id: session_id
+    }
+
+    case ChatMessages.create_chat_message(message_params) do
+      {:ok, _message} ->
+        Logger.info("[AIProcessingWorker] Error system message created for user #{user_id}")
+      {:error, reason} ->
+        Logger.error("[AIProcessingWorker] Failed to create error system message: #{inspect(reason)}")
+    end
+  end
 
 end

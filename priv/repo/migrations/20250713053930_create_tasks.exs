@@ -10,7 +10,6 @@ defmodule Finpilot.Repo.Migrations.CreateTasks do
       add :is_done, :boolean, default: false, null: false
       add :context, :map
       add :user_id, references(:users, on_delete: :nothing, type: :binary_id)
-      add :embedding, :vector, size: 1536
 
       timestamps(type: :utc_datetime)
     end
