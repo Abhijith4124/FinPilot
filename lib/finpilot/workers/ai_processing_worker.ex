@@ -68,6 +68,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       metadata: Map.drop(args, ["text", "user_id", "source"]),
       instructions: instructions,
       running_tasks: running_tasks,
+      history: args["history"] || [],
       timestamp: DateTime.utc_now(),
       process_id: self(),
       node: Node.self()
@@ -137,11 +138,17 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     tools = OpenRouter.format_tools(tool_definitions)
     Logger.debug("[AIProcessingWorker] Using #{length(tools)} tools")
 
-    messages = [OpenRouter.user_message(prompt)]
+    history_messages = (context.history || []) |> Enum.map(fn msg ->
+      %{role: msg["role"], content: msg["content"]}
+    end)
+
+    final_messages = history_messages ++ [OpenRouter.user_message(prompt)]
 
     Logger.info("[AIProcessingWorker] Calling OpenRouter AI with model #{@default_model}")
-    result = OpenRouter.call_ai(@default_model, messages,
+    tool_choice = if context.source == "chat", do: "required", else: "auto"
+    result = OpenRouter.call_ai(@default_model, final_messages,
       tools: tools,
+      tool_choice: tool_choice,
       system_prompt: get_system_prompt()
     )
 
@@ -192,12 +199,14 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   # Get system prompt for AI
   defp get_system_prompt do
     """
-    You are FinPilot, an intelligent AI assistant that analyzes incoming text and creates tasks for ALL operations that require tool execution.
+    You are FinPilot, an intelligent AI assistant that analyzes incoming text and creates tasks for operations that require tool execution.
 
     CRITICAL RULES:
     1. You MUST ONLY respond using tool calls. Never provide text responses or explanations outside of tool calls.
-    2. For ANY operation that requires tool execution (data retrieval, external API calls, file operations, etc.), you MUST create a task using the create_task tool.
-    3. The ONLY exception is direct communication with users - use assistant_message tool for immediate responses.
+    2. For general conversation, questions, or responses that do not require any tool execution or data processing, use ONLY the create_assistant_message tool to respond directly to the user.
+    3. Create tasks ONLY when the incoming text requires actions involving tool execution, such as data retrieval, API calls, calculations, or other operations.
+    4. For chat sources, if the message is a simple greeting or doesn't require further action, solely use create_assistant_message without creating tasks.
+    5. The ONLY exception to task creation is direct communication - use create_assistant_message for immediate responses.
 
     Your responsibilities:
     1. Analyze incoming text from various sources (chat, email, calendar, CRM, etc.)
@@ -274,21 +283,21 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     tasks_text = format_running_tasks(context.running_tasks)
 
     """
-    INCOMING TEXT:
-    Source: #{context.source}
-    Content: #{context.text}
-    Timestamp: #{context.timestamp}
+      INCOMING TEXT:
+      Source: #{context.source}
+      Content: #{context.text}
+      Timestamp: #{context.timestamp}
 
-    #{if context.metadata != %{}, do: "Metadata: #{inspect(context.metadata)}\n", else: ""}
+      #{if context.metadata != %{}, do: "Metadata: #{inspect(context.metadata)}\n", else: ""}
 
-    ACTIVE INSTRUCTIONS:
-    #{instructions_text}
+      ACTIVE INSTRUCTIONS:
+      #{instructions_text}
 
-    RUNNING TASKS:
-    #{tasks_text}
+      RUNNING TASKS:
+      #{tasks_text}
 
-    Please analyze this incoming text and respond appropriately using tool calls for actions or direct messages for communication.
-    """
+      Please analyze this incoming text and respond appropriately using tool calls for actions or direct messages for communication.
+      """
   end
 
   # Format instructions for AI prompt
@@ -518,41 +527,41 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   defp execute_tool("update_instruction", args, user_id, _context) do
     Logger.info("[AIProcessingWorker] Updating instruction #{args["id"]} for user #{user_id}")
 
-    case Finpilot.Tasks.get_instruction!(args["id"]) do
-      instruction ->
-        update_params = Map.take(args, ["name", "description", "trigger_conditions", "actions", "ai_prompt", "is_active"])
-        case Finpilot.Tasks.update_instruction(instruction, update_params) do
-          {:ok, updated} ->
-            Logger.info("[AIProcessingWorker] Instruction updated: #{updated.id}")
-            {:ok, %{instruction_id: updated.id}}
-          {:error, changeset} ->
-            error_msg = "Failed to update instruction: #{inspect(changeset.errors)}"
-            Logger.error("[AIProcessingWorker] #{error_msg}")
-            create_error_system_message(user_id, error_msg, args["session_id"])
-            {:error, error_msg}
-        end
-      _ ->
-        {:error, "Instruction not found"}
-    end
+    try do
+  instruction = Finpilot.Tasks.get_instruction!(args["id"])
+  update_params = Map.take(args, ["name", "description", "trigger_conditions", "actions", "ai_prompt", "is_active"])
+  case Finpilot.Tasks.update_instruction(instruction, update_params) do
+    {:ok, updated} ->
+      Logger.info("[AIProcessingWorker] Instruction updated: #{updated.id}")
+      {:ok, %{instruction_id: updated.id}}
+    {:error, changeset} ->
+      error_msg = "Failed to update instruction: #{inspect(changeset.errors)}"
+      Logger.error("[AIProcessingWorker] #{error_msg}")
+      create_error_system_message(user_id, error_msg, args["session_id"])
+      {:error, error_msg}
   end
+rescue
+  Ecto.NoResultsError -> {:error, "Instruction not found"}
+end
+end
 
   defp execute_tool("delete_instruction", args, user_id, _context) do
     Logger.info("[AIProcessingWorker] Deleting instruction #{args["id"]} for user #{user_id}")
 
-    case Finpilot.Tasks.get_instruction!(args["id"]) do
-      instruction ->
-        case Finpilot.Tasks.delete_instruction(instruction) do
-          {:ok, _} ->
-            Logger.info("[AIProcessingWorker] Instruction deleted: #{args["id"]}")
-            {:ok, %{instruction_id: args["id"]}}
-          {:error, reason} ->
-            Logger.error("[AIProcessingWorker] Failed to delete instruction: #{inspect(reason)}")
-            {:error, "Failed to delete instruction"}
-        end
-      _ ->
-        {:error, "Instruction not found"}
-    end
+    try do
+  instruction = Finpilot.Tasks.get_instruction!(args["id"])
+  case Finpilot.Tasks.delete_instruction(instruction) do
+    {:ok, _} ->
+      Logger.info("[AIProcessingWorker] Instruction deleted: #{args["id"]}")
+      {:ok, %{instruction_id: args["id"]}}
+    {:error, reason} ->
+      Logger.error("[AIProcessingWorker] Failed to delete instruction: #{inspect(reason)}")
+      {:error, "Failed to delete instruction"}
   end
+rescue
+  Ecto.NoResultsError -> {:error, "Instruction not found"}
+end
+end
 
   # Execute tool calls locally
   defp execute_tool("create_task", args, user_id, context) do

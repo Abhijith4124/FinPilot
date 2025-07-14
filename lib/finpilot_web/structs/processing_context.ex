@@ -10,6 +10,7 @@ defmodule FinpilotWeb.Structs.ProcessingContext do
     :tool_results,
     :timestamp,
     :process_id,
-    :node
+    :node,
+    :history
   ]
 end

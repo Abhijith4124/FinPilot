@@ -83,9 +83,13 @@ defmodule Finpilot.Tasks.Processor do
     Logger.info("[Processor][#{chat_request_id}] Chat process PID: #{inspect(self())}, Node: #{node()}")
     Logger.debug("[Processor][#{chat_request_id}] Chat stack trace: #{inspect(Process.info(self(), :current_stacktrace))}")
     
+    messages = Finpilot.ChatMessages.list_messages_by_session(session_id)
+    formatted_history = Enum.map(messages, fn msg -> %{role: msg.role, content: msg.message} end)
+    
     metadata = %{
       "session_id" => session_id,
-      "timestamp" => DateTime.utc_now()
+      "timestamp" => DateTime.utc_now(),
+      "history" => formatted_history
     }
     
     result = process_text(message, user_id, "chat", metadata)
