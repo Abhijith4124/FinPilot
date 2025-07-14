@@ -57,14 +57,11 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
   # Private functions
 
   defp get_unprocessed_emails(user_id, batch_size) do
-    # TODO: Remove the 1000 email limit after testing
-    total_limit = min(batch_size, 1000)
-
     Email
     |> where([e], e.user_id == ^user_id)
     |> where([e], is_nil(e.embedding))
     |> where([e], not is_nil(e.content))
-    |> limit(^total_limit)
+    |> limit(^batch_size)
     |> order_by([e], e.received_at)
     |> Repo.all()
   end

@@ -226,7 +226,6 @@ defmodule Finpilot.Services.EmailEmbedder do
     |> where([e], e.user_id == ^user_id)
     |> where([e], is_nil(e.embedding))
     |> where([e], not is_nil(e.content))
-    |> limit(100)  # TODO: Remove this limit after testing
     |> Repo.aggregate(:count, :id)
   end
 
