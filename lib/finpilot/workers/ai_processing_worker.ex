@@ -371,19 +371,19 @@ defmodule Finpilot.Workers.AIProcessingWorker do
                 "description" => "Description of the instruction"
               },
               "trigger_conditions" => %{
-                "type" => "string",
-                "description" => "Conditions that trigger this instruction"
+                "type" => "object",
+                "description" => "Conditions that trigger this instruction as a JSON object"
               },
               "actions" => %{
-                "type" => "string",
-                "description" => "Actions to perform when triggered"
+                "type" => "object",
+                "description" => "Actions to perform when triggered as a JSON object"
               },
               "ai_prompt" => %{
                 "type" => "string",
                 "description" => "AI prompt for this instruction"
               }
             },
-            "required" => ["name", "description", "trigger_conditions", "actions"]
+            "required" => ["name", "description", "trigger_conditions", "actions", "ai_prompt"]
           }
         }
       },

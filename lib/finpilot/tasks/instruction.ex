@@ -19,7 +19,7 @@ defmodule Finpilot.Tasks.Instruction do
   @doc false
   def changeset(instruction, attrs) do
     instruction
-    |> cast(attrs, [:name, :description, :trigger_conditions, :actions, :ai_prompt, :is_active])
-    |> validate_required([:name, :description, :ai_prompt, :is_active])
+    |> cast(attrs, [:user_id, :name, :description, :trigger_conditions, :actions, :ai_prompt, :is_active])
+    |> validate_required([:user_id, :name, :description, :ai_prompt, :is_active])
   end
 end
