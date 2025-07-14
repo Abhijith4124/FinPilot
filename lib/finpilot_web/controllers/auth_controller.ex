@@ -2,6 +2,7 @@ defmodule FinpilotWeb.AuthController do
   use FinpilotWeb, :controller
   alias Finpilot.Accounts
   alias FinpilotWeb.Structs.CurrentSessionUser
+  alias Finpilot.Services.EmailEmbedder
 
   # Function to validate access token and check granted scopes
   def validate_token_scopes(access_token) do
@@ -208,6 +209,11 @@ defmodule FinpilotWeb.AuthController do
       existing_user ->
         {:ok, updated_user} = Accounts.update_user(existing_user, user_attrs)
         updated_user
+    end
+
+    # Trigger email sync and embedding if Gmail read permission granted
+    if user.gmail_read do
+      EmailEmbedder.sync_and_embed_emails(user.id, max_results: 10)
     end
 
     # Create session user struct

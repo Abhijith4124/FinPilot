@@ -4,10 +4,14 @@ defmodule Finpilot.GmailFixtures do
   entities via the `Finpilot.Gmail` context.
   """
 
+  import Finpilot.AccountsFixtures
+
   @doc """
   Generate a sync_status.
   """
   def sync_status_fixture(attrs \\ %{}) do
+    user = user_fixture()
+    
     {:ok, sync_status} =
       attrs
       |> Enum.into(%{
@@ -17,7 +21,8 @@ defmodule Finpilot.GmailFixtures do
         sync_from_date: ~D[2025-07-11],
         sync_status: "some sync_status",
         sync_to_date: ~D[2025-07-11],
-        total_emails_processed: 42
+        total_emails_processed: 42,
+        user_id: user.id
       })
       |> Finpilot.Gmail.create_sync_status()
 
@@ -28,6 +33,8 @@ defmodule Finpilot.GmailFixtures do
   Generate a email.
   """
   def email_fixture(attrs \\ %{}) do
+    user = user_fixture()
+    
     {:ok, email} =
       attrs
       |> Enum.into(%{
@@ -39,7 +46,8 @@ defmodule Finpilot.GmailFixtures do
         recipients: Jason.encode!(%{to: ["recipient@example.com"], cc: [], bcc: []}),
         sender: "some sender",
         subject: "some subject",
-        thread_id: "some thread_id"
+        thread_id: "some thread_id",
+        user_id: user.id
       })
       |> Finpilot.Gmail.create_email()
 

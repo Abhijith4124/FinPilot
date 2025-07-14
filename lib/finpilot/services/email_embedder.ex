@@ -190,23 +190,16 @@ defmodule Finpilot.Services.EmailEmbedder do
   - {:error, reason} - Error in sync or embedding
   """
   def sync_and_embed_emails(user_id, opts \\ []) do
-    Logger.info("Starting sync and embed process for user #{user_id}")
+    Logger.info("Starting async sync and embed process for user #{user_id}")
 
-    # First, sync emails from Gmail
-    case GmailService.sync_user_emails(user_id) do
-      {:ok, sync_result} ->
-        Logger.info("Email sync completed for user #{user_id}, starting embedding process")
-
-        # Then start the embedding process
-        case start_embedding_process(user_id, opts) do
-          {:ok, job} ->
-            {:ok, {sync_result, job}}
-          {:error, reason} ->
-            {:error, "Embedding failed: #{reason}"}
-        end
+    # Start async email sync from Gmail (this will automatically trigger embedding when done)
+    case GmailService.sync_user_emails_async(user_id, opts) do
+      {:ok, sync_job} ->
+        Logger.info("Email sync job #{sync_job.id} scheduled for user #{user_id}")
+        {:ok, sync_job}
 
       {:error, reason} ->
-        error_message = "Email sync failed: #{reason}"
+        error_message = "Failed to schedule email sync: #{reason}"
         Logger.error(error_message)
         update_sync_status(user_id, :error, error_message)
         {:error, error_message}

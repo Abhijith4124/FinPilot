@@ -15,6 +15,7 @@ defmodule Finpilot.Gmail.Email do
     field :labels, :string
     field :embedding, Pgvector.Ecto.Vector
     field :processed_at, :utc_datetime
+    field :attachments, :map
     
     belongs_to :user, Finpilot.Accounts.User
 
@@ -24,7 +25,7 @@ defmodule Finpilot.Gmail.Email do
   @doc false
   def changeset(email, attrs) do
     email
-    |> cast(attrs, [:gmail_message_id, :subject, :sender, :recipients, :content, :received_at, :thread_id, :labels, :embedding, :processed_at, :user_id])
+    |> cast(attrs, [:gmail_message_id, :subject, :sender, :recipients, :content, :received_at, :thread_id, :labels, :embedding, :processed_at, :attachments, :user_id])
     |> validate_required([:gmail_message_id, :subject, :sender, :content, :received_at, :thread_id, :user_id])
     |> validate_recipients()
     |> unique_constraint(:gmail_message_id)

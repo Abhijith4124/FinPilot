@@ -8,12 +8,13 @@ defmodule Finpilot.Repo.Migrations.CreateEmails do
       add :subject, :string
       add :sender, :string
       add :recipients, :string
-      add :content, :string
+      add :content, :text
       add :received_at, :utc_datetime
       add :thread_id, :string
       add :labels, :text
       add :embedding, :vector, size: 3072
       add :processed_at, :utc_datetime
+      add :attachments, :map
       add :user_id, references(:users, on_delete: :nothing, type: :binary_id)
 
       timestamps(type: :utc_datetime)

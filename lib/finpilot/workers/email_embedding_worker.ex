@@ -75,7 +75,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
     # Prepare texts for batch embedding
     email_texts = Enum.map(emails, &prepare_email_text/1)
 
-    case OpenAI.generate_embeddings(email_texts) do
+    case OpenAI.generate_embeddings_large(email_texts) do
       {:ok, embeddings} ->
         Logger.info("Generated #{length(embeddings)} embeddings for user #{user_id}")
 

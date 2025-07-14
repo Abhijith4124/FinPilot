@@ -68,7 +68,7 @@ config :phoenix, :json_library, Jason
 config :finpilot, Oban,
   repo: Finpilot.Repo,
   plugins: [Oban.Plugins.Pruner],
-  queues: [default: 10, ai_processing: 5, email_processing: 3, task_execution: 5, chat_assistant: 5]
+  queues: [default: 10, ai_processing: 5, email_processing: 3, email_sync: 3, task_execution: 5]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
