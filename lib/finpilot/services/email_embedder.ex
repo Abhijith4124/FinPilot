@@ -22,7 +22,7 @@ defmodule Finpilot.Services.EmailEmbedder do
   ## Parameters
   - user_id: The user ID to process emails for
   - opts: Optional parameters
-    - batch_size: Number of emails to process per batch (default: 10)
+    - batch_size: Number of emails to process per batch (default: 1000)
     - priority: Job priority (default: 0)
     - schedule_in: Delay before starting (default: immediate)
 
@@ -31,7 +31,7 @@ defmodule Finpilot.Services.EmailEmbedder do
   - {:error, reason} - Error scheduling job
   """
   def start_embedding_process(user_id, opts \\ []) do
-    batch_size = Keyword.get(opts, :batch_size, 10)
+    batch_size = Keyword.get(opts, :batch_size, 1000)
     priority = Keyword.get(opts, :priority, 0)
     schedule_in = Keyword.get(opts, :schedule_in, 0)
 

@@ -351,6 +351,7 @@ defmodule Finpilot.Workers.TaskExecutor do
     5. Use pause_task for external waits.
     6. Use end_task only when fully complete.
     7. Use communication tools for updates or questions.
+    8. Prefer Semantic search tools over native tools whenever possible, native tools should only be a fallback.
 
     DECISION FLOW:
     1. Check if task is complete -> end_task.

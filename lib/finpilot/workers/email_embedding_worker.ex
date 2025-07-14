@@ -20,7 +20,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"user_id" => user_id, "batch_size" => batch_size} = _args}) do
     user_id = ensure_binary_id(user_id)
-    batch_size = batch_size || 10
+    batch_size = batch_size || 1000
 
     Logger.info("Starting email embedding processing for user #{user_id}, batch size: #{batch_size}")
 
@@ -37,7 +37,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
         :ok
       else
         Logger.info("Processing #{length(emails)} emails for user #{user_id}")
-        process_emails_batch(emails, user_id)
+        process_emails_batch(emails, user_id, batch_size)
       end
     rescue
       error ->
@@ -51,14 +51,14 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"user_id" => user_id}}) do
     # Default batch size if not specified
-    perform(%Oban.Job{args: %{"user_id" => user_id, "batch_size" => 10}})
+    perform(%Oban.Job{args: %{"user_id" => user_id, "batch_size" => 1000}})
   end
 
   # Private functions
 
   defp get_unprocessed_emails(user_id, batch_size) do
-    # TODO: Remove the 100 email limit after testing
-    total_limit = min(batch_size, 100)
+    # TODO: Remove the 1000 email limit after testing
+    total_limit = min(batch_size, 1000)
 
     Email
     |> where([e], e.user_id == ^user_id)
@@ -69,7 +69,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
     |> Repo.all()
   end
 
-  defp process_emails_batch(emails, user_id) do
+  defp process_emails_batch(emails, user_id, batch_size) do
     total_emails = length(emails)
 
     # Prepare texts for batch embedding
@@ -97,7 +97,7 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
 
         # Schedule next batch if there might be more emails
         if total_emails >= 10 do
-          schedule_next_batch(user_id)
+          schedule_next_batch(user_id, batch_size)
         end
 
         :ok
@@ -179,9 +179,9 @@ defmodule Finpilot.Workers.EmailEmbeddingWorker do
     end
   end
 
-  defp schedule_next_batch(user_id) do
+  defp schedule_next_batch(user_id, batch_size) do
     # Schedule the next batch with a small delay to avoid overwhelming the API
-    %{"user_id" => user_id, "batch_size" => 10}
+    %{"user_id" => user_id, "batch_size" => batch_size}
     |> new(schedule_in: 5)
     |> Oban.insert()
   end
