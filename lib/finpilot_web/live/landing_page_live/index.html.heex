@@ -164,10 +164,10 @@
   <div class="bg-white border-b border-gray-200 px-4">
     <div class="flex items-center justify-between">
       <div class="flex space-x-6">
-        <button class="py-3 text-sm font-medium text-blue-600 border-b-2 border-blue-600">
+        <button phx-click="switch_tab" phx-value-tab="chat" class={"py-3 text-sm font-medium #{if @current_tab == "chat", do: "text-blue-600 border-b-2 border-blue-600", else: "text-gray-500 hover:text-gray-700"}"}>>
           Chat
         </button>
-        <button class="py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+        <button phx-click="switch_tab" phx-value-tab="history" class={"py-3 text-sm font-medium #{if @current_tab == "history", do: "text-blue-600 border-b-2 border-blue-600", else: "text-gray-500 hover:text-gray-700"}"}>>
           History
         </button>
       </div>
@@ -189,23 +189,25 @@
     </div>
   </div>
 
-  <!-- Main Chat Area -->
+  <!-- Main Content Area -->
    <main class="flex-1 flex flex-col">
-     <!-- Messages Container -->
-    <div class="flex-1 overflow-y-auto px-4 py-6">
-      <div class="space-y-6">
-        <%= if @messages == [] do %>
-          <!-- Welcome Message -->
-          <div class="flex justify-center">
-            <div class="text-center max-w-md">
-              <div class="w-16 h-16 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span class="text-xl text-white font-bold">FP</span>
+     <%= if @current_tab == "chat" do %>
+       <!-- Chat View -->
+       <!-- Messages Container -->
+      <div class="flex-1 overflow-y-auto px-4 py-6">
+        <div class="space-y-6">
+          <%= if @messages == [] do %>
+            <!-- Welcome Message -->
+            <div class="flex justify-center">
+              <div class="text-center max-w-md">
+                <div class="w-16 h-16 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span class="text-xl text-white font-bold">FP</span>
+                </div>
+                <h3 class="text-lg font-medium text-gray-900 mb-2">Welcome to FinPilot</h3>
+                <p class="text-gray-600 text-sm">Ask about emails, clients, schedule meetings, or assign tasks. I'm here to help with your Gmail, Calendar, and HubSpot.</p>
               </div>
-              <h3 class="text-lg font-medium text-gray-900 mb-2">Welcome to FinPilot</h3>
-              <p class="text-gray-600 text-sm">Ask about emails, clients, schedule meetings, or assign tasks. I'm here to help with your Gmail, Calendar, and HubSpot.</p>
             </div>
-          </div>
-        <% else %>
+          <% else %>
           <!-- Dynamic Messages -->
           <%= for message <- @messages do %>
             <%= if message.role == "user" do %>
@@ -240,67 +242,130 @@
               </div>
             <% end %>
           <% end %>
-        <% end %>
-        
-        <!-- Loading Indicator -->
-        <%= if @loading do %>
-          <div class="flex justify-start mb-4">
-            <div class="max-w-xs lg:max-w-md">
-              <div class="bg-gray-100 text-gray-900 rounded-lg px-4 py-2 shadow">
-                <div class="flex items-center space-x-2 mb-2">
-                  <div class="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
-                    <span class="text-xs text-white font-medium">AI</span>
+          <% end %>
+          
+          <!-- Loading Indicator -->
+          <%= if @loading do %>
+            <div class="flex justify-start mb-4">
+              <div class="max-w-xs lg:max-w-md">
+                <div class="bg-gray-100 text-gray-900 rounded-lg px-4 py-2 shadow">
+                  <div class="flex items-center space-x-2 mb-2">
+                    <div class="w-6 h-6 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
+                      <span class="text-xs text-white font-medium">AI</span>
+                    </div>
+                    <span class="text-xs text-gray-500">FinPilot</span>
                   </div>
-                  <span class="text-xs text-gray-500">FinPilot</span>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
-                  <span class="text-sm text-gray-600">Thinking...</span>
+                  <div class="flex items-center space-x-2">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                    <span class="text-sm text-gray-600">Thinking...</span>
+                  </div>
                 </div>
               </div>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    <% else %>
+      <!-- History View -->
+      <div class="flex-1 overflow-y-auto px-4 py-6">
+        <%= if @current_user do %>
+          <%= if @chat_sessions == [] do %>
+            <!-- No History Message -->
+            <div class="flex justify-center">
+              <div class="text-center max-w-md">
+                <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                  </svg>
+                </div>
+                <h3 class="text-lg font-medium text-gray-900 mb-2">No Chat History</h3>
+                <p class="text-gray-600 text-sm">Start a new conversation to see your chat history here.</p>
+              </div>
+            </div>
+          <% else %>
+            <!-- Chat Sessions List -->
+            <div class="space-y-3">
+              <h2 class="text-lg font-medium text-gray-900 mb-4">Chat History</h2>
+              <%= for session <- @chat_sessions do %>
+                <div phx-click="open_chat_session" phx-value-session_id={session.id} class="bg-white border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors">
+                  <div class="flex items-center justify-between">
+                    <div class="flex-1">
+                      <h3 class="text-sm font-medium text-gray-900 truncate">
+                        <%= session.title || "Untitled Chat" %>
+                      </h3>
+                      <p class="text-xs text-gray-500 mt-1">
+                        <%= Calendar.strftime(session.updated_at, "%B %d, %Y at %I:%M %p") %>
+                      </p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                      <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        <%= String.capitalize(session.status) %>
+                      </span>
+                      <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              <% end %>
+            </div>
+          <% end %>
+        <% else %>
+          <!-- Not Signed In Message -->
+          <div class="flex justify-center">
+            <div class="text-center max-w-md">
+              <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-medium text-gray-900 mb-2">Sign In Required</h3>
+              <p class="text-gray-600 text-sm">Please sign in to view your chat history.</p>
             </div>
           </div>
         <% end %>
       </div>
-    </div>
+    <% end %>
 
-    <!-- Input Area -->
-    <div class="border-t border-gray-200 bg-white px-4 py-4">
-      <%= if @current_user do %>
-        <form phx-submit="send_message" class="flex items-center space-x-3">
-          <div class="flex-1">
-            <div class="relative">
-              <input
-                type="text"
-                name="message"
-                value={@new_message}
-                phx-change="update_message"
-                disabled={@loading}
-                class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
-                placeholder="Ask about emails, clients, schedule meetings, or assign tasks..."
-                autocomplete="off"
-              />
+    <!-- Input Area - Only show in chat mode -->
+    <%= if @current_tab == "chat" do %>
+      <div class="border-t border-gray-200 bg-white px-4 py-4">
+        <%= if @current_user do %>
+          <form phx-submit="send_message" class="flex items-center space-x-3">
+            <div class="flex-1">
+              <div class="relative">
+                <input
+                  type="text"
+                  name="message"
+                  value={@new_message}
+                  phx-change="update_message"
+                  disabled={@loading}
+                  class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  placeholder="Ask about emails, clients, schedule meetings, or assign tasks..."
+                  autocomplete="off"
+                />
+              </div>
             </div>
+            <button 
+              type="submit" 
+              disabled={@loading || String.trim(@new_message) == ""}
+              class="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            >
+              <%= if @loading do %>
+                <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              <% else %>
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                </svg>
+              <% end %>
+            </button>
+          </form>
+        <% else %>
+          <div class="text-center text-gray-500">
+            <p>Please sign in to start chatting</p>
           </div>
-          <button 
-            type="submit" 
-            disabled={@loading || String.trim(@new_message) == ""}
-            class="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-          >
-            <%= if @loading do %>
-              <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-            <% else %>
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
-              </svg>
-            <% end %>
-          </button>
-        </form>
-      <% else %>
-        <div class="text-center text-gray-500">
-          <p>Please sign in to start chatting</p>
-        </div>
-      <% end %>
-    </div>
+        <% end %>
+      </div>
+    <% end %>
   </main>
 </div>

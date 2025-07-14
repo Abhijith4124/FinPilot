@@ -16,17 +16,20 @@ defmodule FinpilotWeb.LandingPageLive.Index do
       messages: [],
       new_message: "",
       loading: false,
-      subscribed_session_id: nil
+      subscribed_session_id: nil,
+      current_tab: "chat",
+      chat_sessions: []
     )}
   end
 
   @impl true
-  def handle_params(%{"id" => session_id}, _uri, socket) do
+  def handle_params(%{"session_id" => session_id}, _uri, socket) do
     # Load existing chat session from URL
     case ChatSessions.get_chat_session(session_id) do
       {:ok, chat_session} ->
         # Load messages for this session
         messages = ChatMessages.list_messages_by_session(session_id)
+        Logger.info("[LiveView] Loading chat session #{session_id}, found #{length(messages)} messages")
 
         # Subscribe to PubSub if not already subscribed
         unless socket.assigns.subscribed_session_id == session_id do
@@ -36,7 +39,8 @@ defmodule FinpilotWeb.LandingPageLive.Index do
         socket = assign(socket,
           chat_session: chat_session,
           messages: messages,
-          subscribed_session_id: session_id
+          subscribed_session_id: session_id,
+          current_tab: "chat"
         )
         {:noreply, socket}
       {:error, _} ->
@@ -144,6 +148,29 @@ defmodule FinpilotWeb.LandingPageLive.Index do
     else
       {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_event("switch_tab", %{"tab" => tab}, socket) do
+    socket = case tab do
+      "history" ->
+        if socket.assigns.current_user do
+          chat_sessions = ChatSessions.list_chat_sessions_by_user(socket.assigns.current_user.id)
+          assign(socket, current_tab: "history", chat_sessions: chat_sessions)
+        else
+          assign(socket, current_tab: "history", chat_sessions: [])
+        end
+      "chat" ->
+        assign(socket, current_tab: "chat")
+      _ ->
+        socket
+    end
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("open_chat_session", %{"session_id" => session_id}, socket) do
+    {:noreply, push_navigate(socket, to: "/chat/#{session_id}")}
   end
 
   @impl true
