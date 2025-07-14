@@ -11,6 +11,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
   use Oban.Worker, queue: :ai_processing
   require Logger
 
+  alias FinpilotWeb.Structs.ProcessingContext
   alias Finpilot.Tasks.{Task, Instruction}
   alias Finpilot.Workers.TaskExecutor
   alias Finpilot.Workers.ToolExecutor
@@ -60,7 +61,7 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     instructions = get_active_instructions(user_id)
     running_tasks = get_running_tasks(user_id)
 
-    %{
+    %ProcessingContext{
       text: text,
       user_id: user_id,
       source: source,
@@ -255,6 +256,14 @@ defmodule Finpilot.Workers.AIProcessingWorker do
     3. If ANY tool execution needed → create task with specific tool instructions
     4. If both needed → use assistant_message first, then create task
 
+    INSTRUCTION HANDLING:
+    - Analyze incoming text for potential instructions, especially persistent or long-running ones (e.g., "Whenever I get an email, do X")
+    - Use create_instruction to add new persistent instructions
+    - Use update_instruction to modify existing ones
+    - Use delete_instruction to remove them
+    - When source is 'chat', ALWAYS include a create_assistant_message tool call to provide a response to the user, in addition to any other tool calls.
+    - For instructions, create or update them first, then send a confirmation message.
+
     Remember: You are a task orchestrator, not a task executor. All tool execution happens through tasks.
     """
   end
@@ -348,6 +357,97 @@ defmodule Finpilot.Workers.AIProcessingWorker do
       %{
         "type" => "function",
         "function" => %{
+          "name" => "create_instruction",
+          "description" => "Create a new persistent instruction for the user",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "name" => %{
+                "type" => "string",
+                "description" => "Name of the instruction"
+              },
+              "description" => %{
+                "type" => "string",
+                "description" => "Description of the instruction"
+              },
+              "trigger_conditions" => %{
+                "type" => "string",
+                "description" => "Conditions that trigger this instruction"
+              },
+              "actions" => %{
+                "type" => "string",
+                "description" => "Actions to perform when triggered"
+              },
+              "ai_prompt" => %{
+                "type" => "string",
+                "description" => "AI prompt for this instruction"
+              }
+            },
+            "required" => ["name", "description", "trigger_conditions", "actions"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "update_instruction",
+          "description" => "Update an existing instruction",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "id" => %{
+                "type" => "string",
+                "description" => "ID of the instruction to update"
+              },
+              "name" => %{
+                "type" => "string",
+                "description" => "New name"
+              },
+              "description" => %{
+                "type" => "string",
+                "description" => "New description"
+              },
+              "trigger_conditions" => %{
+                "type" => "string",
+                "description" => "New trigger conditions"
+              },
+              "actions" => %{
+                "type" => "string",
+                "description" => "New actions"
+              },
+              "ai_prompt" => %{
+                "type" => "string",
+                "description" => "New AI prompt"
+              },
+              "is_active" => %{
+                "type" => "boolean",
+                "description" => "Active status"
+              }
+            },
+            "required" => ["id"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => "delete_instruction",
+          "description" => "Delete an existing instruction",
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "id" => %{
+                "type" => "string",
+                "description" => "ID of the instruction to delete"
+              }
+            },
+            "required" => ["id"]
+          }
+        }
+      },
+      %{
+        "type" => "function",
+        "function" => %{
           "name" => "create_assistant_message",
           "description" => "Send a message to the user as the AI assistant",
           "parameters" => %{
@@ -388,6 +488,70 @@ defmodule Finpilot.Workers.AIProcessingWorker do
         }
       }
     ]
+  end
+
+  defp execute_tool("create_instruction", args, user_id, _context) do
+    Logger.info("[AIProcessingWorker] Creating instruction for user #{user_id}")
+
+    instruction_params = %{
+      user_id: user_id,
+      name: args["name"],
+      description: args["description"],
+      trigger_conditions: args["trigger_conditions"],
+      actions: args["actions"],
+      ai_prompt: args["ai_prompt"],
+      is_active: true
+    }
+
+    case Finpilot.Tasks.create_instruction(instruction_params) do
+      {:ok, instruction} ->
+        Logger.info("[AIProcessingWorker] Instruction created: #{instruction.id}")
+        {:ok, %{instruction_id: instruction.id}}
+      {:error, changeset} ->
+        error_msg = "Failed to create instruction: #{inspect(changeset.errors)}"
+        Logger.error("[AIProcessingWorker] #{error_msg}")
+        create_error_system_message(user_id, error_msg, args["session_id"])
+        {:error, error_msg}
+    end
+  end
+
+  defp execute_tool("update_instruction", args, user_id, _context) do
+    Logger.info("[AIProcessingWorker] Updating instruction #{args["id"]} for user #{user_id}")
+
+    case Finpilot.Tasks.get_instruction!(args["id"]) do
+      instruction ->
+        update_params = Map.take(args, ["name", "description", "trigger_conditions", "actions", "ai_prompt", "is_active"])
+        case Finpilot.Tasks.update_instruction(instruction, update_params) do
+          {:ok, updated} ->
+            Logger.info("[AIProcessingWorker] Instruction updated: #{updated.id}")
+            {:ok, %{instruction_id: updated.id}}
+          {:error, changeset} ->
+            error_msg = "Failed to update instruction: #{inspect(changeset.errors)}"
+            Logger.error("[AIProcessingWorker] #{error_msg}")
+            create_error_system_message(user_id, error_msg, args["session_id"])
+            {:error, error_msg}
+        end
+      _ ->
+        {:error, "Instruction not found"}
+    end
+  end
+
+  defp execute_tool("delete_instruction", args, user_id, _context) do
+    Logger.info("[AIProcessingWorker] Deleting instruction #{args["id"]} for user #{user_id}")
+
+    case Finpilot.Tasks.get_instruction!(args["id"]) do
+      instruction ->
+        case Finpilot.Tasks.delete_instruction(instruction) do
+          {:ok, _} ->
+            Logger.info("[AIProcessingWorker] Instruction deleted: #{args["id"]}")
+            {:ok, %{instruction_id: args["id"]}}
+          {:error, reason} ->
+            Logger.error("[AIProcessingWorker] Failed to delete instruction: #{inspect(reason)}")
+            {:error, "Failed to delete instruction"}
+        end
+      _ ->
+        {:error, "Instruction not found"}
+    end
   end
 
   # Execute tool calls locally

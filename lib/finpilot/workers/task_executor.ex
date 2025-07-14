@@ -11,6 +11,7 @@ defmodule Finpilot.Workers.TaskExecutor do
   use Oban.Worker, queue: :task_execution
   require Logger
 
+  alias FinpilotWeb.Structs.ProcessingContext
   alias Finpilot.Tasks
   alias Finpilot.ChatMessages
   alias Finpilot.Services.OpenRouter
@@ -50,7 +51,7 @@ defmodule Finpilot.Workers.TaskExecutor do
   defp ensure_binary_id(user_id), do: to_string(user_id)
 
   # Process the task using AI
-  defp process_task(task, tool_results \\ []) do
+  defp process_task(task, tool_results) do
     if task.is_done do
       Logger.debug("[TaskExecutor] Task #{task.id} is already done")
       {:ok, :done}
@@ -78,7 +79,7 @@ defmodule Finpilot.Workers.TaskExecutor do
             {:ok, updated_task} = Tasks.update_task(latest_task, %{context: new_context})
             Logger.debug("[TaskExecutor] Updated task context with tool results for task #{updated_task.id}")
             Logger.debug("[TaskExecutor] Enqueuing next step for task #{updated_task.id}")
-            {:ok, job} = TaskExecutor.new(%{"task_id" => updated_task.id, "user_id" => updated_task.user_id}) |> Oban.insert()
+            {:ok, job} = __MODULE__.new(%{"task_id" => updated_task.id, "user_id" => updated_task.user_id}) |> Oban.insert()
             Logger.debug("[TaskExecutor] Enqueued job #{job.id} for continued processing")
             {:ok, :continued}
           end
@@ -94,7 +95,7 @@ defmodule Finpilot.Workers.TaskExecutor do
 
   # Build context for task processing
   defp build_task_context(task, tool_results) do
-    %{
+    %ProcessingContext{
       task: task,
       tool_results: tool_results,
       timestamp: DateTime.utc_now(),
@@ -165,7 +166,7 @@ defmodule Finpilot.Workers.TaskExecutor do
     end
   end
 
-  defp pause_task(args, task) do
+  defp pause_task(args, _task) do
     {:ok, %{status: :paused, reason: args["reason"]}}
   end
 
@@ -389,8 +390,13 @@ defmodule Finpilot.Workers.TaskExecutor do
       message: args["message"],
       session_id: args["session_id"]
     }
-    with {:ok, message} <- ChatMessages.create_chat_message(message_params) do
-      {:ok, %{message_id: message.id, content: message.message}}
+    case ChatMessages.create_chat_message(message_params) do
+      {:ok, message} ->
+        {:ok, %{message_id: message.id, content: message.message}}
+      {:error, changeset} ->
+        error_msg = format_changeset_errors(changeset)
+        Logger.error("Failed to create assistant message: #{error_msg}")
+        {:error, error_msg}
     end
   end
 
@@ -402,8 +408,13 @@ defmodule Finpilot.Workers.TaskExecutor do
       message: args["message"],
       session_id: args["session_id"]
     }
-    with {:ok, message} <- ChatMessages.create_chat_message(message_params) do
-      {:ok, %{message_id: message.id, content: message.message}}
+    case ChatMessages.create_chat_message(message_params) do
+      {:ok, message} ->
+        {:ok, %{message_id: message.id, content: message.message}}
+      {:error, changeset} ->
+        error_msg = format_changeset_errors(changeset)
+        Logger.error("Failed to create system message: #{error_msg}")
+        {:error, error_msg}
     end
   end
 
